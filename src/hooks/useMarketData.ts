@@ -130,7 +130,9 @@ export function useMarketData() {
       if (fnError) throw fnError;
       if (data.error) throw new Error(data.error);
 
-      const candles: OHLCData[] = data.candles || [];
+      // Sort candles by time to ensure ascending order
+      const candles: OHLCData[] = (data.candles || [])
+        .sort((a: OHLCData, b: OHLCData) => a.time - b.time);
       
       if (candles.length === 0) {
         throw new Error('No data returned from Polygon API');
