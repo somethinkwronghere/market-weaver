@@ -1,4 +1,4 @@
-import { useEffect } from 'react';
+import { useEffect, useState, useCallback } from 'react';
 import { Loader2 } from 'lucide-react';
 import { Header } from '@/components/Header';
 import { CandlestickChart } from '@/components/CandlestickChart';
@@ -6,11 +6,18 @@ import { PlaybackControls } from '@/components/PlaybackControls';
 import { TradingPanel } from '@/components/TradingPanel';
 import { AccountPanel } from '@/components/AccountPanel';
 import { CandleInfo } from '@/components/CandleInfo';
+import { DrawingToolbar, DrawingTool } from '@/components/DrawingToolbar';
+import { TimeframeSelector, Timeframe } from '@/components/TimeframeSelector';
 import { useMarketData } from '@/hooks/useMarketData';
 import { useTradingEngine } from '@/hooks/useTradingEngine';
+import { DrawingLine } from '@/types/drawing';
 import { toast } from 'sonner';
 
 const Index = () => {
+  const [timeframe, setTimeframe] = useState<Timeframe>('1H');
+  const [drawingTool, setDrawingTool] = useState<DrawingTool>('select');
+  const [drawings, setDrawings] = useState<DrawingLine[]>([]);
+
   const {
     visibleCandles,
     currentCandle,
@@ -27,6 +34,7 @@ const Index = () => {
     reset: resetPlayback,
     jumpTo,
     setSpeed,
+    setTimeframe: setMarketTimeframe,
   } = useMarketData();
 
   const {
@@ -41,16 +49,32 @@ const Index = () => {
   // Update price when candle changes
   useEffect(() => {
     if (currentCandle) {
-      updatePrice(currentCandle.close);
+      updatePrice(currentCandle.close, currentCandle.time);
     }
   }, [currentCandle, updatePrice]);
 
-  const handleOpenPosition = (type: 'long' | 'short', size: number) => {
+  const handleTimeframeChange = (tf: Timeframe) => {
+    setTimeframe(tf);
+    setMarketTimeframe(tf);
+  };
+
+  const handleAddDrawing = useCallback((drawing: DrawingLine) => {
+    setDrawings(prev => [...prev, drawing]);
+    setDrawingTool('select');
+    toast.success('Çizim eklendi');
+  }, []);
+
+  const handleClearDrawings = useCallback(() => {
+    setDrawings([]);
+    toast.info('Tüm çizimler silindi');
+  }, []);
+
+  const handleOpenPosition = (type: 'long' | 'short', size: number, stopLoss?: number, takeProfit?: number) => {
     if (!currentCandle) return;
     
-    const position = openPosition(type, size, currentCandle);
+    const position = openPosition(type, size, currentCandle, stopLoss, takeProfit);
     toast.success(`Opened ${type.toUpperCase()} position`, {
-      description: `${size} lot at ${currentCandle.close.toFixed(5)}`,
+      description: `${size} lot at ${currentCandle.close.toFixed(5)}${stopLoss ? ` • SL: ${stopLoss.toFixed(5)}` : ''}${takeProfit ? ` • TP: ${takeProfit.toFixed(5)}` : ''}`,
     });
   };
 
@@ -69,6 +93,7 @@ const Index = () => {
   const handleReset = () => {
     resetPlayback();
     resetAccount();
+    setDrawings([]);
     toast.success('Simulation reset');
   };
 
@@ -96,10 +121,27 @@ const Index = () => {
           <div className="grid grid-cols-1 lg:grid-cols-4 gap-4 lg:gap-6">
             {/* Chart Section - Takes 3 columns */}
             <div className="lg:col-span-3 space-y-4">
+              {/* Chart Toolbar */}
+              <div className="flex items-center justify-between flex-wrap gap-3">
+                <DrawingToolbar 
+                  activeTool={drawingTool}
+                  onToolChange={setDrawingTool}
+                  onClearDrawings={handleClearDrawings}
+                />
+                <TimeframeSelector
+                  activeTimeframe={timeframe}
+                  onTimeframeChange={handleTimeframeChange}
+                />
+              </div>
+
               <div className="h-[400px] lg:h-[500px]">
                 <CandlestickChart 
                   data={visibleCandles}
                   currentPrice={currentCandle?.close}
+                  drawingTool={drawingTool}
+                  drawings={drawings}
+                  onAddDrawing={handleAddDrawing}
+                  positions={tradingState.positions}
                 />
               </div>
               
