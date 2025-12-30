@@ -1,1 +1,4 @@
 project_id = "pvcjhczqcirzfyupkqgi"
+
+[functions.polygon-forex]
+verify_jwt = false
