@@ -81,6 +81,7 @@ export function useMarketData() {
   const livePollIntervalRef = useRef<NodeJS.Timeout | null>(null);
   const lastApiCallRef = useRef<number>(0);
   const didInitRef = useRef(false);
+  const prevTimeframeRef = useRef<Timeframe>("1H");
 
   // Keep ref in sync with state
   useEffect(() => {
@@ -278,10 +279,14 @@ export function useMarketData() {
     };
   }, [playbackState, loadPolygonData, apiRateLimited]);
 
-  // Handle timeframe changes
+  // Handle timeframe changes (only act when timeframe actually changes)
   useEffect(() => {
+    const prevTf = prevTimeframeRef.current;
+    if (prevTf === timeframe) return;
+    prevTimeframeRef.current = timeframe;
+
     // Reload live data with new timeframe (only if we are in live mode)
-    if (playbackStateRef.current === "idle") {
+    if (playbackStateRef.current === "idle" && !apiRateLimited) {
       loadPolygonData({ force: true });
     }
 
@@ -290,15 +295,15 @@ export function useMarketData() {
       const aggregated = aggregateCandles(rawCsvCandles, timeframe).sort((a, b) => a.time - b.time);
       setCsvCandles(aggregated);
 
-      // If in playback mode, reset to the start (paused)
-      if (playbackState !== "idle") {
+      // If user is currently in playback mode and timeframe changes, reset to start (paused)
+      if (playbackStateRef.current !== "idle") {
         setPlaybackState("paused");
         setCurrentIndex(0);
         setVisibleCandles(aggregated.length > 0 ? [aggregated[0]] : []);
         setIsLive(false);
       }
     }
-  }, [timeframe, rawCsvCandles, playbackState, loadPolygonData]);
+  }, [timeframe, rawCsvCandles, loadPolygonData, apiRateLimited]);
 
   const addNextCandle = useCallback(() => {
     if (csvCandles.length === 0) return;
