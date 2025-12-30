@@ -1,4 +1,4 @@
-import { Play, Pause, SkipForward, SkipBack, RotateCcw } from 'lucide-react';
+import { Play, Pause, SkipForward, SkipBack, RotateCcw, FastForward } from 'lucide-react';
 import { PlaybackSpeed } from '@/types/trading';
 import { cn } from '@/lib/utils';
 
@@ -34,17 +34,13 @@ export function PlaybackControls({
   onSeek,
 }: PlaybackControlsProps) {
   return (
-    <div className="trading-card">
-      <div className="flex flex-col gap-4">
+    <div className="bg-[#0a0e17] border-t border-[#1a2332] px-4 py-3">
+      <div className="flex items-center gap-6">
         {/* Progress Bar */}
-        <div className="space-y-2">
-          <div className="flex justify-between text-xs font-mono text-muted-foreground">
-            <span>Candle {currentIndex + 1}</span>
-            <span>{totalCandles} total</span>
-          </div>
-          <div className="relative h-2 bg-muted rounded-full overflow-hidden">
+        <div className="flex-1">
+          <div className="relative h-1.5 bg-[#1a2332] rounded-full overflow-hidden cursor-pointer group">
             <div 
-              className="absolute inset-y-0 left-0 bg-primary rounded-full transition-all duration-200"
+              className="absolute inset-y-0 left-0 bg-blue-500 rounded-full transition-all duration-100"
               style={{ width: `${progress}%` }}
             />
             <input
@@ -56,57 +52,75 @@ export function PlaybackControls({
               className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
             />
           </div>
+          <div className="flex justify-between mt-1">
+            <span className="text-[10px] font-mono text-muted-foreground">
+              {currentIndex + 1} / {totalCandles}
+            </span>
+            <span className="text-[10px] font-mono text-muted-foreground">
+              {progress.toFixed(0)}%
+            </span>
+          </div>
         </div>
 
         {/* Main Controls */}
-        <div className="flex items-center justify-center gap-2">
+        <div className="flex items-center gap-1">
           <button
             onClick={onReset}
-            className="playback-btn"
+            className="p-2 rounded hover:bg-[#1a2332] transition-colors"
             title="Reset"
           >
-            <RotateCcw className="w-4 h-4" />
+            <RotateCcw className="w-4 h-4 text-muted-foreground" />
           </button>
           
           <button
             onClick={onStepBackward}
-            className="playback-btn"
+            className="p-2 rounded hover:bg-[#1a2332] transition-colors"
             disabled={currentIndex <= 0}
             title="Step Back"
           >
-            <SkipBack className="w-4 h-4" />
+            <SkipBack className="w-4 h-4 text-muted-foreground" />
           </button>
           
           <button
             onClick={isPlaying ? onPause : onPlay}
-            className="playback-btn !p-4 !bg-primary hover:!bg-primary/90"
+            className={cn(
+              "w-10 h-10 rounded-full flex items-center justify-center transition-all",
+              isPlaying 
+                ? "bg-blue-500 hover:bg-blue-600" 
+                : "bg-blue-500 hover:bg-blue-600"
+            )}
             title={isPlaying ? 'Pause' : 'Play'}
           >
             {isPlaying ? (
-              <Pause className="w-5 h-5 text-primary-foreground" />
+              <Pause className="w-4 h-4 text-white" />
             ) : (
-              <Play className="w-5 h-5 text-primary-foreground ml-0.5" />
+              <Play className="w-4 h-4 text-white ml-0.5" />
             )}
           </button>
           
           <button
             onClick={onStepForward}
-            className="playback-btn"
+            className="p-2 rounded hover:bg-[#1a2332] transition-colors"
             disabled={currentIndex >= totalCandles - 1}
             title="Step Forward"
           >
-            <SkipForward className="w-4 h-4" />
+            <SkipForward className="w-4 h-4 text-muted-foreground" />
           </button>
         </div>
 
         {/* Speed Controls */}
-        <div className="flex items-center justify-center gap-2">
-          <span className="text-xs text-muted-foreground mr-2">Speed:</span>
+        <div className="flex items-center gap-1">
+          <FastForward className="w-3 h-3 text-muted-foreground mr-1" />
           {speeds.map((s) => (
             <button
               key={s}
               onClick={() => onSpeedChange(s)}
-              className={cn('speed-badge', speed === s && 'active')}
+              className={cn(
+                "px-2 py-1 text-xs font-mono rounded transition-colors",
+                speed === s 
+                  ? "bg-blue-500 text-white" 
+                  : "text-muted-foreground hover:bg-[#1a2332]"
+              )}
             >
               {s}x
             </button>
