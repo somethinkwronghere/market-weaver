@@ -75,20 +75,37 @@ export function useMarketData() {
   const [isLive, setIsLive] = useState(false);
 
   const [error, setError] = useState<string | null>(null);
+  const [apiRateLimited, setApiRateLimited] = useState(false);
 
   const playbackIntervalRef = useRef<NodeJS.Timeout | null>(null);
   const livePollIntervalRef = useRef<NodeJS.Timeout | null>(null);
+  const lastApiCallRef = useRef<number>(0);
 
   // Keep ref in sync with state
   useEffect(() => {
     playbackStateRef.current = playbackState;
   }, [playbackState]);
 
-  // Load live data from Polygon API
+  // Load live data from Polygon API with rate limit protection
   const loadPolygonData = useCallback(
     async (opts?: { silent?: boolean; force?: boolean }) => {
       // When playback starts, stop pulling live data.
       if (!opts?.force && playbackStateRef.current !== "idle") return;
+
+      // Rate limit protection: minimum 30 seconds between API calls
+      const now = Date.now();
+      if (now - lastApiCallRef.current < 30000 && !opts?.force) {
+        console.log("Skipping API call - rate limit protection");
+        return;
+      }
+
+      // If already rate limited, don't try again for 60 seconds
+      if (apiRateLimited && now - lastApiCallRef.current < 60000) {
+        console.log("Skipping API call - previously rate limited");
+        return;
+      }
+
+      lastApiCallRef.current = now;
 
       if (!opts?.silent) setIsLoading(true);
       setError(null);
@@ -112,7 +129,16 @@ export function useMarketData() {
         });
 
         if (fnError) throw fnError;
-        if (data?.error) throw new Error(data.error);
+        if (data?.error) {
+          // Check if it's a rate limit error
+          if (data.error.includes("exceeded the maximum requests")) {
+            setApiRateLimited(true);
+            throw new Error("API rate limited - using CSV data");
+          }
+          throw new Error(data.error);
+        }
+
+        setApiRateLimited(false);
 
         const candles: OHLCData[] = (data?.candles || [])
           .map((c: OHLCData) => ({ ...c, time: normalizeTimestampToSeconds(c.time) }))
@@ -129,16 +155,24 @@ export function useMarketData() {
         }
 
         console.log(
-          `Loaded ${candles.length} candles from Polygon API, playbackState: ${playbackStateRef.current}`
+          `Loaded ${candles.length} candles from Polygon API`
         );
       } catch (err) {
         console.error("Failed to load Polygon data:", err);
-        setError(err instanceof Error ? err.message : "Failed to load Polygon data");
+        const errorMsg = err instanceof Error ? err.message : "Failed to load Polygon data";
+        setError(errorMsg);
+        
+        // Fallback: if we have no visible data and CSV is loaded, show CSV data as "live" view
+        if (playbackStateRef.current === "idle" && visibleCandles.length === 0 && csvCandles.length > 0) {
+          console.log("Using CSV data as fallback for live view");
+          setVisibleCandles(csvCandles);
+          setLiveCandles(csvCandles);
+        }
       } finally {
         if (!opts?.silent) setIsLoading(false);
       }
     },
-    [timeframe]
+    [timeframe, apiRateLimited, visibleCandles.length, csvCandles]
   );
 
   // Load CSV data for playback
@@ -183,6 +217,18 @@ export function useMarketData() {
           if (playbackStateRef.current !== "idle" && aggregated.length > 0) {
             setVisibleCandles((prev) => (prev.length === 0 ? [aggregated[0]] : prev));
           }
+          
+          // If we're in idle mode and have no visible candles yet, show CSV as fallback
+          if (playbackStateRef.current === "idle") {
+            setVisibleCandles((prev) => {
+              if (prev.length === 0) {
+                console.log("Showing CSV data as initial fallback");
+                setLiveCandles(aggregated);
+                return aggregated;
+              }
+              return prev;
+            });
+          }
 
           console.log(`Loaded ${aggregated.length} CSV candles for playback`);
         },
@@ -193,20 +239,26 @@ export function useMarketData() {
     }
   }, [timeframe, isCsvLoaded]);
 
-  // Initial load
+  // Initial load - CSV first, then try API
   useEffect(() => {
-    loadPolygonData({ force: true });
+    // Load CSV first as it's guaranteed to work
     loadCSVData();
+    // Then try to load live data (may fail due to rate limits)
+    const timer = setTimeout(() => {
+      loadPolygonData({ force: true });
+    }, 500);
+    return () => clearTimeout(timer);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Poll live data only while idle (stops as soon as playback starts)
+  // Poll live data only while idle - reduced frequency to avoid rate limits
   useEffect(() => {
-    if (playbackState === "idle") {
+    if (playbackState === "idle" && !apiRateLimited) {
       if (livePollIntervalRef.current) clearInterval(livePollIntervalRef.current);
+      // Poll every 60 seconds to avoid rate limits
       livePollIntervalRef.current = setInterval(() => {
-        loadPolygonData({ silent: true, force: true });
-      }, 15000);
+        loadPolygonData({ silent: true, force: false });
+      }, 60000);
     } else if (livePollIntervalRef.current) {
       clearInterval(livePollIntervalRef.current);
       livePollIntervalRef.current = null;
@@ -218,7 +270,7 @@ export function useMarketData() {
         livePollIntervalRef.current = null;
       }
     };
-  }, [playbackState, loadPolygonData]);
+  }, [playbackState, loadPolygonData, apiRateLimited]);
 
   // Handle timeframe changes
   useEffect(() => {
