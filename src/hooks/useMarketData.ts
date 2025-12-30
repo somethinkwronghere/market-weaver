@@ -2,6 +2,7 @@ import { useState, useCallback, useRef, useEffect } from 'react';
 import Papa from 'papaparse';
 import { OHLCData, PlaybackSpeed } from '@/types/trading';
 import { Timeframe } from '@/components/TimeframeSelector';
+import { supabase } from '@/integrations/supabase/client';
 
 interface CSVRow {
   '': string;
@@ -11,6 +12,8 @@ interface CSVRow {
   Close: string;
   Volume: string;
 }
+
+type DataSource = 'csv' | 'polygon';
 
 // Aggregate candles based on timeframe
 function aggregateCandles(candles: OHLCData[], timeframe: Timeframe): OHLCData[] {
@@ -97,11 +100,62 @@ export function useMarketData() {
   const [isLoading, setIsLoading] = useState(true);
   const [timeframe, setTimeframe] = useState<Timeframe>('1H');
   const [isLive, setIsLive] = useState(false);
+  const [dataSource, setDataSource] = useState<DataSource>('csv');
+  const [error, setError] = useState<string | null>(null);
   const intervalRef = useRef<NodeJS.Timeout | null>(null);
   const syntheticCandlesRef = useRef<OHLCData[]>([]);
 
-  const loadData = useCallback(async () => {
+  // Load data from Polygon API
+  const loadPolygonData = useCallback(async () => {
     setIsLoading(true);
+    setError(null);
+    try {
+      const timespanMap: Record<Timeframe, { multiplier: number; timespan: string }> = {
+        '1H': { multiplier: 1, timespan: 'hour' },
+        '4H': { multiplier: 4, timespan: 'hour' },
+        '1D': { multiplier: 1, timespan: 'day' },
+      };
+      
+      const { multiplier, timespan } = timespanMap[timeframe];
+      
+      const { data, error: fnError } = await supabase.functions.invoke('polygon-forex', {
+        body: { 
+          from: 'EUR', 
+          to: 'USD',
+          multiplier,
+          timespan,
+        },
+      });
+
+      if (fnError) throw fnError;
+      if (data.error) throw new Error(data.error);
+
+      const candles: OHLCData[] = data.candles || [];
+      
+      if (candles.length === 0) {
+        throw new Error('No data returned from Polygon API');
+      }
+
+      setRawCandles(candles);
+      setAllCandles(candles);
+      setVisibleCandles(candles.length > 0 ? [candles[0]] : []);
+      setCurrentIndex(0);
+      setDataSource('polygon');
+      console.log(`Loaded ${candles.length} candles from Polygon API`);
+    } catch (err) {
+      console.error('Failed to load Polygon data, falling back to CSV:', err);
+      setError(err instanceof Error ? err.message : 'Failed to load Polygon data');
+      // Fall back to CSV data
+      await loadCSVData();
+    } finally {
+      setIsLoading(false);
+    }
+  }, [timeframe]);
+
+  // Load data from CSV file
+  const loadCSVData = useCallback(async () => {
+    setIsLoading(true);
+    setError(null);
     try {
       const response = await fetch('/data/synthetic_ohlc.csv');
       const csvText = await response.text();
@@ -125,22 +179,32 @@ export function useMarketData() {
           setAllCandles(aggregated);
           setVisibleCandles(aggregated.length > 0 ? [aggregated[0]] : []);
           setCurrentIndex(0);
+          setDataSource('csv');
           setIsLoading(false);
+          console.log(`Loaded ${aggregated.length} candles from CSV`);
         },
       });
     } catch (error) {
       console.error('Failed to load market data:', error);
+      setError('Failed to load market data');
       setIsLoading(false);
     }
   }, [timeframe]);
+
+  // Main load function - try Polygon first, then CSV
+  const loadData = useCallback(async () => {
+    await loadPolygonData();
+  }, [loadPolygonData]);
 
   useEffect(() => {
     loadData();
   }, []);
 
-  // Handle timeframe changes
+  // Handle timeframe changes - reload from Polygon for proper aggregation
   useEffect(() => {
-    if (rawCandles.length > 0) {
+    if (dataSource === 'polygon') {
+      loadPolygonData();
+    } else if (rawCandles.length > 0) {
       const aggregated = aggregateCandles(rawCandles, timeframe);
       setAllCandles(aggregated);
       syntheticCandlesRef.current = [];
@@ -149,7 +213,7 @@ export function useMarketData() {
       setIsPlaying(false);
       setIsLive(false);
     }
-  }, [timeframe, rawCandles]);
+  }, [timeframe]);
 
   const addNextCandle = useCallback(() => {
     setCurrentIndex(prev => {
