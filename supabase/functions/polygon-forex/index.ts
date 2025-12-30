@@ -40,6 +40,21 @@ serve(async (req) => {
 
     if (data.status === 'ERROR') {
       console.error('Polygon API error:', data);
+
+      // Avoid hard-failing the client on Polygon rate limits.
+      // Return 200 with an explicit flag so the frontend can gracefully fallback to CSV.
+      if (typeof data.error === 'string' && data.error.includes('exceeded the maximum requests per minute')) {
+        return new Response(JSON.stringify({
+          candles: [],
+          pair,
+          timespan: span,
+          rateLimited: true,
+          error: data.error,
+        }), {
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        });
+      }
+
       throw new Error(data.error || 'Polygon API error');
     }
 

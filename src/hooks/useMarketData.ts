@@ -80,6 +80,7 @@ export function useMarketData() {
   const playbackIntervalRef = useRef<NodeJS.Timeout | null>(null);
   const livePollIntervalRef = useRef<NodeJS.Timeout | null>(null);
   const lastApiCallRef = useRef<number>(0);
+  const didInitRef = useRef(false);
 
   // Keep ref in sync with state
   useEffect(() => {
@@ -239,14 +240,19 @@ export function useMarketData() {
     }
   }, [timeframe, isCsvLoaded]);
 
-  // Initial load - CSV first, then try API
+  // Initial load - CSV first, then try API (guarded against React StrictMode double-invocation)
   useEffect(() => {
+    if (didInitRef.current) return;
+    didInitRef.current = true;
+
     // Load CSV first as it's guaranteed to work
     loadCSVData();
+
     // Then try to load live data (may fail due to rate limits)
     const timer = setTimeout(() => {
       loadPolygonData({ force: true });
     }, 500);
+
     return () => clearTimeout(timer);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
