@@ -109,7 +109,7 @@ export function PlaybackControls({
           <button
             onClick={onStepForward}
             className="p-2 rounded hover:bg-[#1a2332] transition-colors"
-            title="Step Forward (generates synthetic if at end)"
+            title="Step Forward"
           >
             <SkipForward className="w-4 h-4 text-muted-foreground" />
           </button>

@@ -321,10 +321,13 @@ export function CandlestickChart({
       }));
       
       seriesRef.current.setData(chartData);
-      
-      // Auto-scroll to the latest candle
+
+      // Keep latest candles visible (works for both live and historical playback)
       if (chartRef.current) {
-        chartRef.current.timeScale().scrollToRealTime();
+        chartRef.current.timeScale().setVisibleLogicalRange({
+          from: Math.max(0, chartData.length - 120),
+          to: chartData.length + 5,
+        });
       }
     }
   }, [data]);

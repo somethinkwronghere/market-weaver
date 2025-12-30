@@ -1,11 +1,11 @@
-import { useState, useCallback, useRef, useEffect } from 'react';
-import Papa from 'papaparse';
-import { OHLCData, PlaybackSpeed } from '@/types/trading';
-import { Timeframe } from '@/components/TimeframeSelector';
-import { supabase } from '@/integrations/supabase/client';
+import { useState, useCallback, useRef, useEffect } from "react";
+import Papa from "papaparse";
+import { OHLCData, PlaybackSpeed } from "@/types/trading";
+import { Timeframe } from "@/components/TimeframeSelector";
+import { supabase } from "@/integrations/supabase/client";
 
 interface CSVRow {
-  '': string;
+  "": string;
   Open: string;
   High: string;
   Low: string;
@@ -13,13 +13,20 @@ interface CSVRow {
   Volume: string;
 }
 
-type PlaybackState = 'idle' | 'playing' | 'paused';
+type PlaybackState = "idle" | "playing" | "paused";
+
+function normalizeTimestampToSeconds(t: number): number {
+  // lightweight-charts expects UTC seconds (integer)
+  if (!Number.isFinite(t)) return 0;
+  const seconds = t > 1e12 ? t / 1000 : t; // ms -> s heuristic
+  return Math.floor(seconds);
+}
 
 // Aggregate candles based on timeframe
 function aggregateCandles(candles: OHLCData[], timeframe: Timeframe): OHLCData[] {
-  if (timeframe === '1H' || candles.length === 0) return candles;
+  if (timeframe === "1H" || candles.length === 0) return candles;
 
-  const multiplier = timeframe === '4H' ? 4 : 24;
+  const multiplier = timeframe === "4H" ? 4 : 24;
   const aggregated: OHLCData[] = [];
 
   for (let i = 0; i < candles.length; i += multiplier) {
@@ -29,8 +36,8 @@ function aggregateCandles(candles: OHLCData[], timeframe: Timeframe): OHLCData[]
     const aggregatedCandle: OHLCData = {
       time: chunk[0].time,
       open: chunk[0].open,
-      high: Math.max(...chunk.map(c => c.high)),
-      low: Math.min(...chunk.map(c => c.low)),
+      high: Math.max(...chunk.map((c) => c.high)),
+      low: Math.min(...chunk.map((c) => c.low)),
       close: chunk[chunk.length - 1].close,
       volume: chunk.reduce((sum, c) => sum + c.volume, 0),
     };
@@ -40,244 +47,251 @@ function aggregateCandles(candles: OHLCData[], timeframe: Timeframe): OHLCData[]
   return aggregated;
 }
 
-// Generate synthetic candle based on previous candles
-function generateSyntheticCandle(prevCandles: OHLCData[], lastTime: number, timeframe: Timeframe): OHLCData {
-  const lastCandle = prevCandles[prevCandles.length - 1];
-  const recentCandles = prevCandles.slice(-20);
-  
-  // Calculate average volatility from recent candles
-  const avgRange = recentCandles.reduce((sum, c) => sum + (c.high - c.low), 0) / recentCandles.length;
-  const avgVolume = recentCandles.reduce((sum, c) => sum + c.volume, 0) / recentCandles.length;
-  
-  // Calculate trend direction from recent closes
-  const trendStrength = recentCandles.length > 5 
-    ? (recentCandles[recentCandles.length - 1].close - recentCandles[0].close) / recentCandles[0].close
-    : 0;
-  
-  // Random walk with trend bias
-  const randomFactor = (Math.random() - 0.5) * 2;
-  const trendBias = trendStrength * 10;
-  const direction = randomFactor + trendBias;
-  
-  // Generate open (gap from previous close with small random factor)
-  const gapFactor = (Math.random() - 0.5) * avgRange * 0.1;
-  const open = lastCandle.close + gapFactor;
-  
-  // Generate close based on direction
-  const priceChange = direction * avgRange * (0.3 + Math.random() * 0.7);
-  const close = open + priceChange;
-  
-  // Generate high and low
-  const wickUp = Math.random() * avgRange * 0.5;
-  const wickDown = Math.random() * avgRange * 0.5;
-  const high = Math.max(open, close) + wickUp;
-  const low = Math.min(open, close) - wickDown;
-  
-  // Generate volume with some randomness
-  const volumeVariation = 0.5 + Math.random();
-  const volume = avgVolume * volumeVariation;
-  
-  // Calculate next time based on timeframe
-  const timeIncrement = timeframe === '1H' ? 3600 : timeframe === '4H' ? 14400 : 86400;
-  
-  return {
-    time: lastTime + timeIncrement,
-    open,
-    high,
-    low,
-    close,
-    volume,
-  };
-}
-
 export function useMarketData() {
   // Live data from Polygon
   const [liveCandles, setLiveCandles] = useState<OHLCData[]>([]);
-  
+
   // CSV data for playback
   const [csvCandles, setCsvCandles] = useState<OHLCData[]>([]);
   const [rawCsvCandles, setRawCsvCandles] = useState<OHLCData[]>([]);
-  
+
   // Visible candles (what's shown on chart)
   const [visibleCandles, setVisibleCandles] = useState<OHLCData[]>([]);
-  
+
   // Playback state
-  const [playbackState, setPlaybackState] = useState<PlaybackState>('idle');
-  const playbackStateRef = useRef<PlaybackState>('idle');
+  const [playbackState, setPlaybackState] = useState<PlaybackState>("idle");
+  const playbackStateRef = useRef<PlaybackState>("idle");
   const [currentIndex, setCurrentIndex] = useState(0);
   const [speed, setSpeed] = useState<PlaybackSpeed>(1);
-  
+
   // Loading states
   const [isLoading, setIsLoading] = useState(true);
   const [isCsvLoaded, setIsCsvLoaded] = useState(false);
-  
+
+  // Timeframe
+  const [timeframe, setTimeframe] = useState<Timeframe>("1H");
+
+  // UI flags (kept for compatibility; we no longer generate infinite synthetic candles)
+  const [isLive, setIsLive] = useState(false);
+
+  const [error, setError] = useState<string | null>(null);
+
+  const playbackIntervalRef = useRef<NodeJS.Timeout | null>(null);
+  const livePollIntervalRef = useRef<NodeJS.Timeout | null>(null);
+
   // Keep ref in sync with state
   useEffect(() => {
     playbackStateRef.current = playbackState;
   }, [playbackState]);
-  
-  // Timeframe and live mode
-  const [timeframe, setTimeframe] = useState<Timeframe>('1H');
-  const [isLive, setIsLive] = useState(false);
-  
-  const [error, setError] = useState<string | null>(null);
-  const intervalRef = useRef<NodeJS.Timeout | null>(null);
-  const syntheticCandlesRef = useRef<OHLCData[]>([]);
 
   // Load live data from Polygon API
-  const loadPolygonData = useCallback(async () => {
-    setIsLoading(true);
-    setError(null);
-    try {
-      const timespanMap: Record<Timeframe, { multiplier: number; timespan: string }> = {
-        '1H': { multiplier: 1, timespan: 'hour' },
-        '4H': { multiplier: 4, timespan: 'hour' },
-        '1D': { multiplier: 1, timespan: 'day' },
-      };
-      
-      const { multiplier, timespan } = timespanMap[timeframe];
-      
-      const { data, error: fnError } = await supabase.functions.invoke('polygon-forex', {
-        body: { 
-          from: 'EUR', 
-          to: 'USD',
-          multiplier,
-          timespan,
-        },
-      });
+  const loadPolygonData = useCallback(
+    async (opts?: { silent?: boolean; force?: boolean }) => {
+      // When playback starts, stop pulling live data.
+      if (!opts?.force && playbackStateRef.current !== "idle") return;
 
-      if (fnError) throw fnError;
-      if (data.error) throw new Error(data.error);
+      if (!opts?.silent) setIsLoading(true);
+      setError(null);
 
-      // Sort candles by time to ensure ascending order
-      const candles: OHLCData[] = (data.candles || [])
-        .sort((a: OHLCData, b: OHLCData) => a.time - b.time);
-      
-      if (candles.length === 0) {
-        throw new Error('No data returned from Polygon API');
+      try {
+        const timespanMap: Record<Timeframe, { multiplier: number; timespan: string }> = {
+          "1H": { multiplier: 1, timespan: "hour" },
+          "4H": { multiplier: 4, timespan: "hour" },
+          "1D": { multiplier: 1, timespan: "day" },
+        };
+
+        const { multiplier, timespan } = timespanMap[timeframe];
+
+        const { data, error: fnError } = await supabase.functions.invoke("polygon-forex", {
+          body: {
+            from: "EUR",
+            to: "USD",
+            multiplier,
+            timespan,
+          },
+        });
+
+        if (fnError) throw fnError;
+        if (data?.error) throw new Error(data.error);
+
+        const candles: OHLCData[] = (data?.candles || [])
+          .map((c: OHLCData) => ({ ...c, time: normalizeTimestampToSeconds(c.time) }))
+          .filter((c: OHLCData) => c.time > 0)
+          .sort((a: OHLCData, b: OHLCData) => a.time - b.time);
+
+        if (candles.length === 0) throw new Error("No data returned from Polygon API");
+
+        setLiveCandles(candles);
+
+        // When idle, always show live candles
+        if (playbackStateRef.current === "idle") {
+          setVisibleCandles(candles);
+        }
+
+        console.log(
+          `Loaded ${candles.length} candles from Polygon API, playbackState: ${playbackStateRef.current}`
+        );
+      } catch (err) {
+        console.error("Failed to load Polygon data:", err);
+        setError(err instanceof Error ? err.message : "Failed to load Polygon data");
+      } finally {
+        if (!opts?.silent) setIsLoading(false);
       }
-
-      setLiveCandles(candles);
-      // When idle, show all live candles
-      if (playbackStateRef.current === 'idle') {
-        setVisibleCandles(candles);
-      }
-      console.log(`Loaded ${candles.length} candles from Polygon API, playbackState: ${playbackStateRef.current}`);
-    } catch (err) {
-      console.error('Failed to load Polygon data:', err);
-      setError(err instanceof Error ? err.message : 'Failed to load Polygon data');
-    } finally {
-      setIsLoading(false);
-    }
-  }, [timeframe]);
+    },
+    [timeframe]
+  );
 
   // Load CSV data for playback
   const loadCSVData = useCallback(async () => {
     if (isCsvLoaded) return;
-    
+
     try {
-      const response = await fetch('/data/synthetic_ohlc_timegan-2.csv');
+      const response = await fetch("/data/synthetic_ohlc_timegan-2.csv");
+      if (!response.ok) throw new Error(`CSV fetch failed: ${response.status}`);
+
       const csvText = await response.text();
-      
+
       Papa.parse<CSVRow>(csvText, {
         header: true,
         complete: (results) => {
           const candles: OHLCData[] = results.data
-            .filter(row => row[''] && row.Open)
-            .map(row => ({
-              time: new Date(row['']).getTime() / 1000,
+            .filter((row) => row[""] && row.Open)
+            .map((row) => ({
+              time: normalizeTimestampToSeconds(new Date(row[""]).getTime()),
               open: parseFloat(row.Open),
               high: parseFloat(row.High),
               low: parseFloat(row.Low),
               close: parseFloat(row.Close),
               volume: parseFloat(row.Volume),
-            }));
-          
+            }))
+            .filter((c) =>
+              Number.isFinite(c.time) &&
+              Number.isFinite(c.open) &&
+              Number.isFinite(c.high) &&
+              Number.isFinite(c.low) &&
+              Number.isFinite(c.close)
+            )
+            .sort((a, b) => a.time - b.time);
+
           setRawCsvCandles(candles);
-          const aggregated = aggregateCandles(candles, timeframe);
+
+          const aggregated = aggregateCandles(candles, timeframe).sort((a, b) => a.time - b.time);
           setCsvCandles(aggregated);
           setIsCsvLoaded(true);
+
+          // If user hit play before CSV finished loading, ensure at least 1 bar becomes visible.
+          if (playbackStateRef.current !== "idle" && aggregated.length > 0) {
+            setVisibleCandles((prev) => (prev.length === 0 ? [aggregated[0]] : prev));
+          }
+
           console.log(`Loaded ${aggregated.length} CSV candles for playback`);
         },
       });
-    } catch (error) {
-      console.error('Failed to load CSV data:', error);
-      setError('Failed to load CSV data');
+    } catch (e) {
+      console.error("Failed to load CSV data:", e);
+      setError(e instanceof Error ? e.message : "Failed to load CSV data");
     }
   }, [timeframe, isCsvLoaded]);
 
-  // Initial load - get live Polygon data
+  // Initial load
   useEffect(() => {
-    loadPolygonData();
+    loadPolygonData({ force: true });
     loadCSVData();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // Poll live data only while idle (stops as soon as playback starts)
+  useEffect(() => {
+    if (playbackState === "idle") {
+      if (livePollIntervalRef.current) clearInterval(livePollIntervalRef.current);
+      livePollIntervalRef.current = setInterval(() => {
+        loadPolygonData({ silent: true, force: true });
+      }, 15000);
+    } else if (livePollIntervalRef.current) {
+      clearInterval(livePollIntervalRef.current);
+      livePollIntervalRef.current = null;
+    }
+
+    return () => {
+      if (livePollIntervalRef.current) {
+        clearInterval(livePollIntervalRef.current);
+        livePollIntervalRef.current = null;
+      }
+    };
+  }, [playbackState, loadPolygonData]);
 
   // Handle timeframe changes
   useEffect(() => {
-    // Reload live data with new timeframe
-    loadPolygonData();
-    
+    // Reload live data with new timeframe (only if we are in live mode)
+    if (playbackStateRef.current === "idle") {
+      loadPolygonData({ force: true });
+    }
+
     // Re-aggregate CSV data if loaded
     if (rawCsvCandles.length > 0) {
-      const aggregated = aggregateCandles(rawCsvCandles, timeframe);
+      const aggregated = aggregateCandles(rawCsvCandles, timeframe).sort((a, b) => a.time - b.time);
       setCsvCandles(aggregated);
-      
-      // If in playback mode, reset
-      if (playbackState !== 'idle') {
-        setPlaybackState('paused');
+
+      // If in playback mode, reset to the start (paused)
+      if (playbackState !== "idle") {
+        setPlaybackState("paused");
         setCurrentIndex(0);
-        syntheticCandlesRef.current = [];
         setVisibleCandles(aggregated.length > 0 ? [aggregated[0]] : []);
         setIsLive(false);
       }
     }
-  }, [timeframe]);
+  }, [timeframe, rawCsvCandles, playbackState, loadPolygonData]);
 
-  // Add next candle during playback
   const addNextCandle = useCallback(() => {
-    setCurrentIndex(prev => {
-      const nextIndex = prev + 1;
-      
-      // If we've reached the end of CSV data, generate synthetic candle
-      if (nextIndex >= csvCandles.length) {
-        const allVisible = [...csvCandles, ...syntheticCandlesRef.current];
-        const lastCandle = allVisible[allVisible.length - 1];
-        const newSyntheticCandle = generateSyntheticCandle(allVisible, lastCandle.time, timeframe);
-        syntheticCandlesRef.current = [...syntheticCandlesRef.current, newSyntheticCandle];
-        setVisibleCandles([...csvCandles, ...syntheticCandlesRef.current]);
-        setIsLive(true);
-        return nextIndex;
+    if (csvCandles.length === 0) return;
+
+    setCurrentIndex((prev) => {
+      // Stop at the end of CSV (no infinite synthetic extension)
+      if (prev >= csvCandles.length - 1) {
+        setPlaybackState("paused");
+        setVisibleCandles(csvCandles);
+        setIsLive(false);
+        return prev;
       }
-      
-      setVisibleCandles([...csvCandles.slice(0, nextIndex + 1), ...syntheticCandlesRef.current]);
+
+      const nextIndex = prev + 1;
+      setVisibleCandles(csvCandles.slice(0, nextIndex + 1));
+
+      if (nextIndex >= csvCandles.length - 1) {
+        setPlaybackState("paused");
+      }
+
       return nextIndex;
     });
-  }, [csvCandles, timeframe]);
+  }, [csvCandles]);
 
   // Play - start CSV playback, stop showing live data
   const play = useCallback(() => {
-    if (playbackState === 'idle') {
-      // First time playing - start from beginning of CSV
+    if (csvCandles.length === 0) return;
+
+    if (playbackState === "idle") {
       setCurrentIndex(0);
-      syntheticCandlesRef.current = [];
-      setVisibleCandles(csvCandles.length > 0 ? [csvCandles[0]] : []);
+      setVisibleCandles([csvCandles[0]]);
+      setIsLive(false);
     }
-    setPlaybackState('playing');
+
+    setPlaybackState("playing");
   }, [playbackState, csvCandles]);
 
   // Pause playback
   const pause = useCallback(() => {
-    setPlaybackState('paused');
+    setPlaybackState("paused");
   }, []);
 
   // Step forward
   const stepForward = useCallback(() => {
-    if (playbackState === 'idle') {
-      // Start playback mode
+    if (csvCandles.length === 0) return;
+
+    if (playbackState === "idle") {
       setCurrentIndex(0);
-      syntheticCandlesRef.current = [];
-      setVisibleCandles(csvCandles.length > 0 ? [csvCandles[0]] : []);
-      setPlaybackState('paused');
+      setVisibleCandles([csvCandles[0]]);
+      setPlaybackState("paused");
+      setIsLive(false);
     } else {
       addNextCandle();
     }
@@ -285,73 +299,74 @@ export function useMarketData() {
 
   // Step backward
   const stepBackward = useCallback(() => {
-    if (playbackState === 'idle') return;
-    
-    setCurrentIndex(prev => {
-      if (prev <= 0) return 0;
-      
-      const newIndex = prev - 1;
-      
-      // If stepping back from synthetic territory
-      if (syntheticCandlesRef.current.length > 0 && newIndex >= csvCandles.length - 1) {
-        syntheticCandlesRef.current = syntheticCandlesRef.current.slice(0, -1);
-        setVisibleCandles([...csvCandles, ...syntheticCandlesRef.current]);
-        if (syntheticCandlesRef.current.length === 0) setIsLive(false);
-      } else {
-        setVisibleCandles(csvCandles.slice(0, newIndex + 1));
-        setIsLive(false);
+    if (playbackState === "idle") return;
+
+    setCurrentIndex((prev) => {
+      if (prev <= 0) {
+        setVisibleCandles(csvCandles.length > 0 ? [csvCandles[0]] : []);
+        return 0;
       }
-      
+
+      const newIndex = prev - 1;
+      setVisibleCandles(csvCandles.slice(0, newIndex + 1));
+      setIsLive(false);
       return newIndex;
     });
-  }, [csvCandles]);
+  }, [csvCandles, playbackState]);
 
   // Reset - go back to showing live data
   const reset = useCallback(() => {
-    setPlaybackState('idle');
+    setPlaybackState("idle");
     setCurrentIndex(0);
-    syntheticCandlesRef.current = [];
     setVisibleCandles(liveCandles);
     setIsLive(false);
-  }, [liveCandles]);
+
+    // Refresh live candles silently when returning to live mode
+    loadPolygonData({ silent: true, force: true });
+  }, [liveCandles, loadPolygonData]);
 
   // Jump to specific index
-  const jumpTo = useCallback((index: number) => {
-    if (playbackState === 'idle') {
-      setPlaybackState('paused');
-    }
-    const clampedIndex = Math.max(0, Math.min(index, csvCandles.length - 1));
-    setCurrentIndex(clampedIndex);
-    syntheticCandlesRef.current = [];
-    setVisibleCandles(csvCandles.slice(0, clampedIndex + 1));
-    setIsLive(false);
-  }, [csvCandles, playbackState]);
+  const jumpTo = useCallback(
+    (index: number) => {
+      if (csvCandles.length === 0) return;
+
+      if (playbackState === "idle") {
+        setPlaybackState("paused");
+      }
+
+      const clampedIndex = Math.max(0, Math.min(index, csvCandles.length - 1));
+      setCurrentIndex(clampedIndex);
+      setVisibleCandles(csvCandles.slice(0, clampedIndex + 1));
+      setIsLive(false);
+    },
+    [csvCandles, playbackState]
+  );
 
   // Playback interval
   useEffect(() => {
-    if (playbackState === 'playing') {
+    if (playbackState === "playing") {
       const interval = 1000 / speed;
-      intervalRef.current = setInterval(addNextCandle, interval);
-    } else {
-      if (intervalRef.current) {
-        clearInterval(intervalRef.current);
-        intervalRef.current = null;
-      }
+      playbackIntervalRef.current = setInterval(addNextCandle, interval);
+    } else if (playbackIntervalRef.current) {
+      clearInterval(playbackIntervalRef.current);
+      playbackIntervalRef.current = null;
     }
 
     return () => {
-      if (intervalRef.current) {
-        clearInterval(intervalRef.current);
+      if (playbackIntervalRef.current) {
+        clearInterval(playbackIntervalRef.current);
       }
     };
   }, [playbackState, speed, addNextCandle]);
 
   const currentCandle = visibleCandles[visibleCandles.length - 1] || null;
-  const isPlaying = playbackState === 'playing';
-  const isInPlaybackMode = playbackState !== 'idle';
+  const isPlaying = playbackState === "playing";
+  const isInPlaybackMode = playbackState !== "idle";
   const totalCandles = isInPlaybackMode ? csvCandles.length : liveCandles.length;
-  const progress = isInPlaybackMode 
-    ? (csvCandles.length > 0 ? (visibleCandles.length / csvCandles.length) * 100 : 0)
+  const progress = isInPlaybackMode
+    ? csvCandles.length > 0
+      ? (visibleCandles.length / csvCandles.length) * 100
+      : 0
     : 100;
 
   return {
@@ -367,6 +382,7 @@ export function useMarketData() {
     isLoading,
     timeframe,
     isLive,
+    error,
     play,
     pause,
     stepForward,
