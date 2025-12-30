@@ -1,6 +1,7 @@
 import { useState, useCallback, useRef, useEffect } from 'react';
 import Papa from 'papaparse';
 import { OHLCData, PlaybackSpeed } from '@/types/trading';
+import { Timeframe } from '@/components/TimeframeSelector';
 
 interface CSVRow {
   '': string;
@@ -11,13 +12,40 @@ interface CSVRow {
   Volume: string;
 }
 
+// Aggregate candles based on timeframe
+function aggregateCandles(candles: OHLCData[], timeframe: Timeframe): OHLCData[] {
+  if (timeframe === '1H' || candles.length === 0) return candles;
+
+  const multiplier = timeframe === '4H' ? 4 : 24; // 4H = 4 candles, 1D = 24 candles
+  const aggregated: OHLCData[] = [];
+
+  for (let i = 0; i < candles.length; i += multiplier) {
+    const chunk = candles.slice(i, Math.min(i + multiplier, candles.length));
+    if (chunk.length === 0) continue;
+
+    const aggregatedCandle: OHLCData = {
+      time: chunk[0].time,
+      open: chunk[0].open,
+      high: Math.max(...chunk.map(c => c.high)),
+      low: Math.min(...chunk.map(c => c.low)),
+      close: chunk[chunk.length - 1].close,
+      volume: chunk.reduce((sum, c) => sum + c.volume, 0),
+    };
+    aggregated.push(aggregatedCandle);
+  }
+
+  return aggregated;
+}
+
 export function useMarketData() {
+  const [rawCandles, setRawCandles] = useState<OHLCData[]>([]);
   const [allCandles, setAllCandles] = useState<OHLCData[]>([]);
   const [visibleCandles, setVisibleCandles] = useState<OHLCData[]>([]);
   const [currentIndex, setCurrentIndex] = useState(0);
   const [isPlaying, setIsPlaying] = useState(false);
   const [speed, setSpeed] = useState<PlaybackSpeed>(1);
   const [isLoading, setIsLoading] = useState(true);
+  const [timeframe, setTimeframe] = useState<Timeframe>('1H');
   const intervalRef = useRef<NodeJS.Timeout | null>(null);
 
   const loadData = useCallback(async () => {
@@ -40,8 +68,10 @@ export function useMarketData() {
               volume: parseFloat(row.Volume),
             }));
           
-          setAllCandles(candles);
-          setVisibleCandles([candles[0]]);
+          setRawCandles(candles);
+          const aggregated = aggregateCandles(candles, timeframe);
+          setAllCandles(aggregated);
+          setVisibleCandles(aggregated.length > 0 ? [aggregated[0]] : []);
           setCurrentIndex(0);
           setIsLoading(false);
         },
@@ -50,11 +80,23 @@ export function useMarketData() {
       console.error('Failed to load market data:', error);
       setIsLoading(false);
     }
-  }, []);
+  }, [timeframe]);
 
   useEffect(() => {
     loadData();
-  }, [loadData]);
+  }, []);
+
+  // Handle timeframe changes
+  useEffect(() => {
+    if (rawCandles.length > 0) {
+      const aggregated = aggregateCandles(rawCandles, timeframe);
+      setAllCandles(aggregated);
+      // Reset to beginning when timeframe changes
+      setVisibleCandles(aggregated.length > 0 ? [aggregated[0]] : []);
+      setCurrentIndex(0);
+      setIsPlaying(false);
+    }
+  }, [timeframe, rawCandles]);
 
   const addNextCandle = useCallback(() => {
     setCurrentIndex(prev => {
@@ -134,6 +176,7 @@ export function useMarketData() {
     isPlaying,
     speed,
     isLoading,
+    timeframe,
     play,
     pause,
     stepForward,
@@ -141,5 +184,6 @@ export function useMarketData() {
     reset,
     jumpTo,
     setSpeed,
+    setTimeframe,
   };
 }
