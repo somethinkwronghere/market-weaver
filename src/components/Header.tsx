@@ -1,24 +1,47 @@
-import { Activity } from 'lucide-react';
+import { Activity, Settings, ChevronDown } from 'lucide-react';
 
-export function Header() {
+interface HeaderProps {
+  symbol?: string;
+  spread?: number;
+}
+
+export function Header({ symbol = 'EUR/USD', spread = 0.8 }: HeaderProps) {
   return (
-    <header className="trading-card !rounded-none border-x-0 border-t-0">
-      <div className="flex items-center justify-between">
-        <div className="flex items-center gap-3">
-          <div className="w-10 h-10 rounded-lg bg-primary/20 flex items-center justify-center">
-            <Activity className="w-5 h-5 text-primary" />
+    <header className="h-12 bg-[#0a0e17] border-b border-[#1a2332] flex items-center justify-between px-4">
+      {/* Left - Logo & Symbol */}
+      <div className="flex items-center gap-6">
+        <div className="flex items-center gap-2">
+          <div className="w-8 h-8 rounded bg-gradient-to-br from-blue-500 to-blue-600 flex items-center justify-center">
+            <Activity className="w-4 h-4 text-white" />
           </div>
-          <div>
-            <h1 className="text-lg font-semibold tracking-tight">Synthetic Market Simulator</h1>
-            <p className="text-xs text-muted-foreground">Forward Test Universe • EUR/USD</p>
+          <span className="font-bold text-sm tracking-wide text-white">SYNTHEX</span>
+        </div>
+        
+        <div className="h-6 w-px bg-[#1a2332]" />
+        
+        {/* Symbol Selector */}
+        <button className="flex items-center gap-2 px-3 py-1.5 rounded bg-[#0f1521] border border-[#1a2332] hover:border-blue-500/50 transition-colors">
+          <span className="text-sm font-semibold text-white">{symbol}</span>
+          <ChevronDown className="w-3 h-3 text-muted-foreground" />
+        </button>
+        
+        <div className="flex items-center gap-4 text-xs">
+          <div className="flex items-center gap-1">
+            <span className="text-muted-foreground">Spread:</span>
+            <span className="text-white font-mono">{spread.toFixed(1)}</span>
           </div>
         </div>
-        <div className="flex items-center gap-4">
-          <div className="flex items-center gap-2">
-            <span className="w-2 h-2 rounded-full bg-primary animate-pulse" />
-            <span className="text-xs text-muted-foreground">Synthetic Data Active</span>
-          </div>
+      </div>
+
+      {/* Right - Status */}
+      <div className="flex items-center gap-4">
+        <div className="flex items-center gap-2">
+          <span className="w-1.5 h-1.5 rounded-full bg-green-500 animate-pulse" />
+          <span className="text-xs text-muted-foreground">Synthetic Feed</span>
         </div>
+        <button className="p-2 rounded hover:bg-[#1a2332] transition-colors">
+          <Settings className="w-4 h-4 text-muted-foreground" />
+        </button>
       </div>
     </header>
   );
