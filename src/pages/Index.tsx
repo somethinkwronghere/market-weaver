@@ -1,5 +1,5 @@
 import { useEffect, useState, useCallback } from 'react';
-import { Loader2 } from 'lucide-react';
+import { Loader2, Radio } from 'lucide-react';
 import { Header } from '@/components/Header';
 import { CandlestickChart } from '@/components/CandlestickChart';
 import { PlaybackControls } from '@/components/PlaybackControls';
@@ -7,7 +7,7 @@ import { TradingPanel } from '@/components/TradingPanel';
 import { AccountPanel } from '@/components/AccountPanel';
 import { DrawingToolbar, DrawingTool } from '@/components/DrawingToolbar';
 import { TimeframeSelector, Timeframe } from '@/components/TimeframeSelector';
-import { RSIPanel, MACDPanel } from '@/components/IndicatorPanel';
+import { RSIPanel, MACDPanel, StochasticPanel, ATRPanel, VolumePanel } from '@/components/IndicatorPanel';
 import { useMarketData } from '@/hooks/useMarketData';
 import { useTradingEngine } from '@/hooks/useTradingEngine';
 import { useIndicators } from '@/hooks/useIndicators';
@@ -28,6 +28,7 @@ const Index = () => {
     isPlaying,
     speed,
     isLoading,
+    isLive,
     play,
     pause,
     stepForward,
@@ -47,7 +48,7 @@ const Index = () => {
     resetAccount,
   } = useTradingEngine();
 
-  const { rsi, macd, bollingerBands } = useIndicators(visibleCandles);
+  const { rsi, macd, bollingerBands, stochastic, atr, volume } = useIndicators(visibleCandles);
 
   useEffect(() => {
     if (currentCandle) {
@@ -111,11 +112,19 @@ const Index = () => {
         <div className="flex-1 flex flex-col">
           {/* Toolbar */}
           <div className="h-10 bg-[#0a0e17] border-b border-[#1a2332] flex items-center justify-between px-4">
-            <DrawingToolbar 
-              activeTool={drawingTool}
-              onToolChange={setDrawingTool}
-              onClearDrawings={handleClearDrawings}
-            />
+            <div className="flex items-center gap-4">
+              <DrawingToolbar 
+                activeTool={drawingTool}
+                onToolChange={setDrawingTool}
+                onClearDrawings={handleClearDrawings}
+              />
+              {isLive && (
+                <div className="flex items-center gap-1.5 px-2 py-1 bg-emerald-500/20 rounded text-emerald-400 text-xs font-medium animate-pulse">
+                  <Radio className="w-3 h-3" />
+                  LIVE - Synthetic Data
+                </div>
+              )}
+            </div>
             <TimeframeSelector
               activeTimeframe={timeframe}
               onTimeframeChange={handleTimeframeChange}
@@ -135,10 +144,13 @@ const Index = () => {
             />
           </div>
 
-          {/* Indicators */}
-          <div className="h-[180px] bg-[#0a0e17] border-t border-[#1a2332] grid grid-cols-2 gap-2 p-2">
+          {/* Indicators - 5 panels grid */}
+          <div className="h-[160px] bg-[#0a0e17] border-t border-[#1a2332] grid grid-cols-5 gap-1 p-1">
             <RSIPanel data={rsi} />
             <MACDPanel data={macd} />
+            <StochasticPanel data={stochastic} />
+            <ATRPanel data={atr} />
+            <VolumePanel data={volume} />
           </div>
 
           {/* Playback Controls */}
@@ -155,6 +167,7 @@ const Index = () => {
             onReset={handleReset}
             onSpeedChange={setSpeed}
             onSeek={jumpTo}
+            isLive={isLive}
           />
         </div>
 
