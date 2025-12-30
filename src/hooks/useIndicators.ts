@@ -20,18 +20,33 @@ export interface BollingerData {
   lower: number;
 }
 
+export interface StochasticData {
+  time: number;
+  k: number;
+  d: number;
+}
+
+export interface ATRData {
+  time: number;
+  value: number;
+}
+
+export interface VolumeData {
+  time: number;
+  value: number;
+  color: string;
+}
+
 function calculateEMA(data: number[], period: number): number[] {
   const ema: number[] = [];
   const multiplier = 2 / (period + 1);
   
-  // First EMA is SMA
   let sum = 0;
   for (let i = 0; i < period && i < data.length; i++) {
     sum += data[i];
   }
   ema[period - 1] = sum / period;
   
-  // Calculate EMA for rest
   for (let i = period; i < data.length; i++) {
     ema[i] = (data[i] - ema[i - 1]) * multiplier + ema[i - 1];
   }
@@ -97,7 +112,6 @@ export function useIndicators(candles: OHLCData[]) {
       macdLine[i] = ema12[i] - ema26[i];
     }
     
-    // Signal line (9-period EMA of MACD)
     const validMacd = macdLine.filter(v => v !== undefined);
     const signalLine = calculateEMA(validMacd, 9);
     
@@ -111,7 +125,7 @@ export function useIndicators(candles: OHLCData[]) {
       
       macdData.push({
         time: candles[i].time,
-        macd: macdValue * 10000, // Scale for display
+        macd: macdValue * 10000,
         signal: signalValue * 10000,
         histogram: (macdValue - signalValue) * 10000,
       });
@@ -134,7 +148,6 @@ export function useIndicators(candles: OHLCData[]) {
       const middle = sma[i];
       if (middle === undefined) continue;
       
-      // Calculate standard deviation
       let sumSquaredDiff = 0;
       for (let j = 0; j < period; j++) {
         sumSquaredDiff += Math.pow(closes[i - j] - middle, 2);
@@ -152,5 +165,85 @@ export function useIndicators(candles: OHLCData[]) {
     return bbData;
   }, [candles]);
 
-  return { rsi, macd, bollingerBands };
+  // Stochastic Oscillator (14, 3, 3)
+  const stochastic = useMemo(() => {
+    if (candles.length < 14) return [];
+    
+    const kPeriod = 14;
+    const dPeriod = 3;
+    const stochData: StochasticData[] = [];
+    const kValues: number[] = [];
+    
+    for (let i = kPeriod - 1; i < candles.length; i++) {
+      const highs = candles.slice(i - kPeriod + 1, i + 1).map(c => c.high);
+      const lows = candles.slice(i - kPeriod + 1, i + 1).map(c => c.low);
+      const highestHigh = Math.max(...highs);
+      const lowestLow = Math.min(...lows);
+      
+      const k = highestHigh !== lowestLow 
+        ? ((candles[i].close - lowestLow) / (highestHigh - lowestLow)) * 100 
+        : 50;
+      kValues.push(k);
+    }
+    
+    // Calculate %D (SMA of %K)
+    for (let i = dPeriod - 1; i < kValues.length; i++) {
+      const dSum = kValues.slice(i - dPeriod + 1, i + 1).reduce((a, b) => a + b, 0);
+      const d = dSum / dPeriod;
+      
+      stochData.push({
+        time: candles[kPeriod - 1 + i].time,
+        k: kValues[i],
+        d,
+      });
+    }
+    
+    return stochData;
+  }, [candles]);
+
+  // ATR (Average True Range) - 14 period
+  const atr = useMemo(() => {
+    if (candles.length < 15) return [];
+    
+    const period = 14;
+    const atrData: ATRData[] = [];
+    const trueRanges: number[] = [];
+    
+    for (let i = 1; i < candles.length; i++) {
+      const current = candles[i];
+      const prev = candles[i - 1];
+      
+      const tr = Math.max(
+        current.high - current.low,
+        Math.abs(current.high - prev.close),
+        Math.abs(current.low - prev.close)
+      );
+      trueRanges.push(tr);
+    }
+    
+    // First ATR is SMA
+    let atrValue = trueRanges.slice(0, period).reduce((a, b) => a + b, 0) / period;
+    
+    for (let i = period; i < trueRanges.length; i++) {
+      atrValue = ((atrValue * (period - 1)) + trueRanges[i]) / period;
+      
+      atrData.push({
+        time: candles[i + 1].time,
+        value: atrValue * 10000, // Scale for pips
+      });
+    }
+    
+    return atrData;
+  }, [candles]);
+
+  // Volume
+  const volume = useMemo(() => {
+    return candles.map((candle, i) => ({
+      time: candle.time,
+      value: candle.volume,
+      color: candle.close >= candle.open ? '#22c55e80' : '#ef444480',
+    }));
+  }, [candles]);
+
+  return { rsi, macd, bollingerBands, stochastic, atr, volume };
 }

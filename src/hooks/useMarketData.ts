@@ -16,7 +16,7 @@ interface CSVRow {
 function aggregateCandles(candles: OHLCData[], timeframe: Timeframe): OHLCData[] {
   if (timeframe === '1H' || candles.length === 0) return candles;
 
-  const multiplier = timeframe === '4H' ? 4 : 24; // 4H = 4 candles, 1D = 24 candles
+  const multiplier = timeframe === '4H' ? 4 : 24;
   const aggregated: OHLCData[] = [];
 
   for (let i = 0; i < candles.length; i += multiplier) {
@@ -37,6 +37,56 @@ function aggregateCandles(candles: OHLCData[], timeframe: Timeframe): OHLCData[]
   return aggregated;
 }
 
+// Generate synthetic candle based on previous candles
+function generateSyntheticCandle(prevCandles: OHLCData[], lastTime: number, timeframe: Timeframe): OHLCData {
+  const lastCandle = prevCandles[prevCandles.length - 1];
+  const recentCandles = prevCandles.slice(-20);
+  
+  // Calculate average volatility from recent candles
+  const avgRange = recentCandles.reduce((sum, c) => sum + (c.high - c.low), 0) / recentCandles.length;
+  const avgVolume = recentCandles.reduce((sum, c) => sum + c.volume, 0) / recentCandles.length;
+  
+  // Calculate trend direction from recent closes
+  const trendStrength = recentCandles.length > 5 
+    ? (recentCandles[recentCandles.length - 1].close - recentCandles[0].close) / recentCandles[0].close
+    : 0;
+  
+  // Random walk with trend bias
+  const randomFactor = (Math.random() - 0.5) * 2;
+  const trendBias = trendStrength * 10;
+  const direction = randomFactor + trendBias;
+  
+  // Generate open (gap from previous close with small random factor)
+  const gapFactor = (Math.random() - 0.5) * avgRange * 0.1;
+  const open = lastCandle.close + gapFactor;
+  
+  // Generate close based on direction
+  const priceChange = direction * avgRange * (0.3 + Math.random() * 0.7);
+  const close = open + priceChange;
+  
+  // Generate high and low
+  const wickUp = Math.random() * avgRange * 0.5;
+  const wickDown = Math.random() * avgRange * 0.5;
+  const high = Math.max(open, close) + wickUp;
+  const low = Math.min(open, close) - wickDown;
+  
+  // Generate volume with some randomness
+  const volumeVariation = 0.5 + Math.random();
+  const volume = avgVolume * volumeVariation;
+  
+  // Calculate next time based on timeframe
+  const timeIncrement = timeframe === '1H' ? 3600 : timeframe === '4H' ? 14400 : 86400;
+  
+  return {
+    time: lastTime + timeIncrement,
+    open,
+    high,
+    low,
+    close,
+    volume,
+  };
+}
+
 export function useMarketData() {
   const [rawCandles, setRawCandles] = useState<OHLCData[]>([]);
   const [allCandles, setAllCandles] = useState<OHLCData[]>([]);
@@ -46,7 +96,9 @@ export function useMarketData() {
   const [speed, setSpeed] = useState<PlaybackSpeed>(1);
   const [isLoading, setIsLoading] = useState(true);
   const [timeframe, setTimeframe] = useState<Timeframe>('1H');
+  const [isLive, setIsLive] = useState(false);
   const intervalRef = useRef<NodeJS.Timeout | null>(null);
+  const syntheticCandlesRef = useRef<OHLCData[]>([]);
 
   const loadData = useCallback(async () => {
     setIsLoading(true);
@@ -91,44 +143,62 @@ export function useMarketData() {
     if (rawCandles.length > 0) {
       const aggregated = aggregateCandles(rawCandles, timeframe);
       setAllCandles(aggregated);
-      // Reset to beginning when timeframe changes
+      syntheticCandlesRef.current = [];
       setVisibleCandles(aggregated.length > 0 ? [aggregated[0]] : []);
       setCurrentIndex(0);
       setIsPlaying(false);
+      setIsLive(false);
     }
   }, [timeframe, rawCandles]);
 
   const addNextCandle = useCallback(() => {
     setCurrentIndex(prev => {
       const nextIndex = prev + 1;
+      
+      // If we've reached the end of CSV data, generate synthetic candle
       if (nextIndex >= allCandles.length) {
-        setIsPlaying(false);
-        return prev;
+        const allVisible = [...allCandles, ...syntheticCandlesRef.current];
+        const lastCandle = allVisible[allVisible.length - 1];
+        const newSyntheticCandle = generateSyntheticCandle(allVisible, lastCandle.time, timeframe);
+        syntheticCandlesRef.current = [...syntheticCandlesRef.current, newSyntheticCandle];
+        setVisibleCandles([...allCandles, ...syntheticCandlesRef.current]);
+        setIsLive(true);
+        return nextIndex;
       }
-      setVisibleCandles(allCandles.slice(0, nextIndex + 1));
+      
+      setVisibleCandles([...allCandles.slice(0, nextIndex + 1), ...syntheticCandlesRef.current]);
       return nextIndex;
     });
-  }, [allCandles]);
+  }, [allCandles, timeframe]);
 
   const play = useCallback(() => {
-    if (currentIndex >= allCandles.length - 1) return;
     setIsPlaying(true);
-  }, [currentIndex, allCandles.length]);
+  }, []);
 
   const pause = useCallback(() => {
     setIsPlaying(false);
   }, []);
 
   const stepForward = useCallback(() => {
-    if (currentIndex < allCandles.length - 1) {
-      addNextCandle();
-    }
-  }, [currentIndex, allCandles.length, addNextCandle]);
+    addNextCandle();
+  }, [addNextCandle]);
 
   const stepBackward = useCallback(() => {
     setCurrentIndex(prev => {
-      const newIndex = Math.max(0, prev - 1);
-      setVisibleCandles(allCandles.slice(0, newIndex + 1));
+      if (prev <= 0) return 0;
+      
+      const newIndex = prev - 1;
+      
+      // If stepping back from synthetic territory
+      if (syntheticCandlesRef.current.length > 0 && newIndex >= allCandles.length - 1) {
+        syntheticCandlesRef.current = syntheticCandlesRef.current.slice(0, -1);
+        setVisibleCandles([...allCandles, ...syntheticCandlesRef.current]);
+        if (syntheticCandlesRef.current.length === 0) setIsLive(false);
+      } else {
+        setVisibleCandles(allCandles.slice(0, newIndex + 1));
+        setIsLive(false);
+      }
+      
       return newIndex;
     });
   }, [allCandles]);
@@ -136,13 +206,17 @@ export function useMarketData() {
   const reset = useCallback(() => {
     setIsPlaying(false);
     setCurrentIndex(0);
+    syntheticCandlesRef.current = [];
     setVisibleCandles(allCandles.length > 0 ? [allCandles[0]] : []);
+    setIsLive(false);
   }, [allCandles]);
 
   const jumpTo = useCallback((index: number) => {
     const clampedIndex = Math.max(0, Math.min(index, allCandles.length - 1));
     setCurrentIndex(clampedIndex);
+    syntheticCandlesRef.current = [];
     setVisibleCandles(allCandles.slice(0, clampedIndex + 1));
+    setIsLive(false);
   }, [allCandles]);
 
   useEffect(() => {
@@ -164,7 +238,8 @@ export function useMarketData() {
   }, [isPlaying, speed, addNextCandle]);
 
   const currentCandle = visibleCandles[visibleCandles.length - 1] || null;
-  const progress = allCandles.length > 0 ? ((currentIndex + 1) / allCandles.length) * 100 : 0;
+  const totalWithSynthetic = allCandles.length + syntheticCandlesRef.current.length;
+  const progress = totalWithSynthetic > 0 ? (visibleCandles.length / allCandles.length) * 100 : 0;
 
   return {
     allCandles,
@@ -172,11 +247,12 @@ export function useMarketData() {
     currentCandle,
     currentIndex,
     totalCandles: allCandles.length,
-    progress,
+    progress: Math.min(progress, 100),
     isPlaying,
     speed,
     isLoading,
     timeframe,
+    isLive,
     play,
     pause,
     stepForward,
