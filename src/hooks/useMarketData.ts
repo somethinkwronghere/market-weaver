@@ -103,12 +103,18 @@ export function useMarketData() {
   
   // Playback state
   const [playbackState, setPlaybackState] = useState<PlaybackState>('idle');
+  const playbackStateRef = useRef<PlaybackState>('idle');
   const [currentIndex, setCurrentIndex] = useState(0);
   const [speed, setSpeed] = useState<PlaybackSpeed>(1);
   
   // Loading states
   const [isLoading, setIsLoading] = useState(true);
   const [isCsvLoaded, setIsCsvLoaded] = useState(false);
+  
+  // Keep ref in sync with state
+  useEffect(() => {
+    playbackStateRef.current = playbackState;
+  }, [playbackState]);
   
   // Timeframe and live mode
   const [timeframe, setTimeframe] = useState<Timeframe>('1H');
@@ -153,17 +159,17 @@ export function useMarketData() {
 
       setLiveCandles(candles);
       // When idle, show all live candles
-      if (playbackState === 'idle') {
+      if (playbackStateRef.current === 'idle') {
         setVisibleCandles(candles);
       }
-      console.log(`Loaded ${candles.length} candles from Polygon API`);
+      console.log(`Loaded ${candles.length} candles from Polygon API, playbackState: ${playbackStateRef.current}`);
     } catch (err) {
       console.error('Failed to load Polygon data:', err);
       setError(err instanceof Error ? err.message : 'Failed to load Polygon data');
     } finally {
       setIsLoading(false);
     }
-  }, [timeframe, playbackState]);
+  }, [timeframe]);
 
   // Load CSV data for playback
   const loadCSVData = useCallback(async () => {
