@@ -5,7 +5,7 @@ import { Timeframe } from "@/components/TimeframeSelector";
 import { supabase } from "@/integrations/supabase/client";
 
 interface CSVRow {
-  "": string;
+  [key: string]: string; // First column may have empty name or be indexed
   Open: string;
   High: string;
   Low: string;
@@ -191,15 +191,29 @@ export function useMarketData() {
         header: true,
         complete: (results) => {
           const candles: OHLCData[] = results.data
-            .filter((row) => row[""] && row.Open)
-            .map((row) => ({
-              time: normalizeTimestampToSeconds(new Date(row[""]).getTime()),
-              open: parseFloat(row.Open),
-              high: parseFloat(row.High),
-              low: parseFloat(row.Low),
-              close: parseFloat(row.Close),
-              volume: parseFloat(row.Volume),
-            }))
+            .filter((row) => {
+              // First column could be "" or first key in row
+              const keys = Object.keys(row);
+              const timestampKey = keys[0];
+              return timestampKey && row[timestampKey] && row.Open;
+            })
+            .map((row) => {
+              // Get timestamp from first column (whatever its name)
+              const keys = Object.keys(row);
+              const timestampStr = row[keys[0]];
+              // Parse date in a cross-browser compatible way (replace space with T for ISO)
+              const isoStr = timestampStr.replace(" ", "T");
+              const timestamp = new Date(isoStr).getTime();
+              
+              return {
+                time: normalizeTimestampToSeconds(timestamp),
+                open: parseFloat(row.Open),
+                high: parseFloat(row.High),
+                low: parseFloat(row.Low),
+                close: parseFloat(row.Close),
+                volume: parseFloat(row.Volume),
+              };
+            })
             .filter((c) =>
               Number.isFinite(c.time) &&
               Number.isFinite(c.open) &&
