@@ -29,6 +29,9 @@ const Index = () => {
     speed,
     isLoading,
     isLive,
+    isInPlaybackMode,
+    liveIsStale,
+    liveLastCandleTime,
     play,
     pause,
     stepForward,
@@ -122,6 +125,21 @@ const Index = () => {
                 <div className="flex items-center gap-1.5 px-2 py-1 bg-emerald-500/20 rounded text-emerald-400 text-xs font-medium animate-pulse">
                   <Radio className="w-3 h-3" />
                   LIVE - Synthetic Data
+                </div>
+              )}
+
+              {!isInPlaybackMode && liveIsStale && liveLastCandleTime && (
+                <div className="flex items-center gap-1.5 px-2 py-1 bg-destructive/15 rounded text-destructive text-xs font-medium">
+                  <Radio className="w-3 h-3" />
+                  <span>
+                    CANLI GECİKMELİ • son: {new Date(liveLastCandleTime * 1000).toLocaleString('tr-TR', {
+                      day: '2-digit',
+                      month: 'short',
+                      year: 'numeric',
+                      hour: '2-digit',
+                      minute: '2-digit',
+                    })}
+                  </span>
                 </div>
               )}
             </div>
