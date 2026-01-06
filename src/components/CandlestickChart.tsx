@@ -83,6 +83,11 @@ export function CandlestickChart({
         secondsVisible: false,
         rightOffset: 5,
         barSpacing: 8,
+        tickMarkFormatter: (time: number) => {
+          const date = new Date(time * 1000);
+          return date.toLocaleDateString('tr-TR', { day: 'numeric', month: 'short' }) + ' ' + 
+                 date.toLocaleTimeString('tr-TR', { hour: '2-digit', minute: '2-digit' });
+        },
       },
       handleScale: {
         mouseWheel: true,
