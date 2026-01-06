@@ -59,7 +59,7 @@ serve(async (req) => {
     }
 
     // Transform results to OHLC format
-    const candles = (data.results || []).map((bar: any) => ({
+    let candles = (data.results || []).map((bar: any) => ({
       time: Math.floor(bar.t / 1000), // Convert ms to seconds
       open: bar.o,
       high: bar.h,
@@ -67,6 +67,70 @@ serve(async (req) => {
       close: bar.c,
       volume: bar.v || 0,
     }));
+
+    // Some Polygon plans return delayed aggregates for FX.
+    // Try to augment with a fresh "last quote" and patch/append the latest candle if possible.
+    try {
+      const lastQuoteUrl = `https://api.polygon.io/v1/last_quote/currencies/${from || 'EUR'}/${to || 'USD'}?apiKey=${apiKey}`;
+      const lastQuoteRes = await fetch(lastQuoteUrl);
+      const lastQuoteData = await lastQuoteRes.json();
+
+      const q = lastQuoteData?.last ?? lastQuoteData?.results ?? lastQuoteData?.result ?? lastQuoteData;
+      const rawTs = q?.timestamp ?? q?.t ?? q?.time;
+      const rawBid = q?.bid ?? q?.b ?? q?.bp;
+      const rawAsk = q?.ask ?? q?.a ?? q?.ap;
+      const rawPrice = q?.price ?? q?.p ?? q?.mid ?? q?.m;
+
+      const ts = typeof rawTs === 'number' ? rawTs : null;
+      const bid = typeof rawBid === 'number' ? rawBid : null;
+      const ask = typeof rawAsk === 'number' ? rawAsk : null;
+      const price =
+        typeof rawPrice === 'number'
+          ? rawPrice
+          : bid !== null && ask !== null
+            ? (bid + ask) / 2
+            : (bid ?? ask);
+
+      if (ts !== null && typeof price === 'number' && Number.isFinite(price)) {
+        const tsSec = Math.floor(ts > 1e12 ? ts / 1000 : ts);
+        const bucketSeconds = span === 'day' ? 86400 * mult : span === 'hour' ? 3600 * mult : 1;
+        const candleTime = Math.floor(tsSec / bucketSeconds) * bucketSeconds;
+
+        if (candles.length > 0) {
+          const last = candles[candles.length - 1];
+          if (last.time === candleTime) {
+            last.high = Math.max(last.high, price);
+            last.low = Math.min(last.low, price);
+            last.close = price;
+          } else if (candleTime > last.time) {
+            candles = candles.concat([
+              {
+                time: candleTime,
+                open: last.close,
+                high: Math.max(last.close, price),
+                low: Math.min(last.close, price),
+                close: price,
+                volume: 0,
+              },
+            ]);
+          }
+        } else {
+          candles = [
+            {
+              time: candleTime,
+              open: price,
+              high: price,
+              low: price,
+              close: price,
+              volume: 0,
+            },
+          ];
+        }
+      }
+    } catch (_e) {
+      // Non-fatal: keep aggregates-only response.
+      console.warn('Last quote fetch failed; continuing with aggregates only');
+    }
 
     console.log(`Fetched ${candles.length} candles`);
 

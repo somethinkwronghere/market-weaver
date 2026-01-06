@@ -446,6 +446,13 @@ export function useMarketData() {
       : 0
     : 100;
 
+  const liveLastCandleTime = liveCandles[liveCandles.length - 1]?.time ?? null;
+  const liveAgeSeconds = liveLastCandleTime
+    ? Math.max(0, Math.floor(Date.now() / 1000 - liveLastCandleTime))
+    : null;
+  // If the most recent "live" candle is older than 6 hours, treat the feed as delayed.
+  const liveIsStale = liveAgeSeconds !== null ? liveAgeSeconds > 6 * 60 * 60 : false;
+
   return {
     allCandles: isInPlaybackMode ? csvCandles : liveCandles,
     visibleCandles,
@@ -459,6 +466,8 @@ export function useMarketData() {
     isLoading,
     timeframe,
     isLive,
+    liveLastCandleTime,
+    liveIsStale,
     error,
     play,
     pause,
