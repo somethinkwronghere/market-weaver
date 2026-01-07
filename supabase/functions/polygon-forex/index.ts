@@ -28,13 +28,38 @@ serve(async (req) => {
     const span = timespan || 'hour';
     const type = assetType || 'forex'; // 'forex' or 'crypto'
     
-    // Calculate date range - last 7 days for hourly data (cleaner candles)
+    // Calculate date range based on timespan for optimal data retrieval
     const end = endDate || new Date().toISOString().split('T')[0];
+    
+    // Dynamic date range based on timespan
+    const getDaysForTimespan = (ts: string, m: number): number => {
+      switch (ts) {
+        case 'minute':
+          if (m === 1) return 2;      // 1M: last 2 days (~2880 candles)
+          if (m === 5) return 7;      // 5M: last 7 days (~2016 candles)
+          if (m === 15) return 14;    // 15M: last 14 days (~1344 candles)
+          return 7;
+        case 'hour':
+          if (m === 1) return 7;      // 1H: last 7 days (~168 candles)
+          if (m === 4) return 30;     // 4H: last 30 days (~180 candles)
+          return 7;
+        case 'day':
+          return 180;                 // 1D: last 180 days
+        case 'week':
+          return 730;                 // 1W: last 2 years (~104 candles)
+        case 'month':
+          return 1825;                // 1MO: last 5 years (~60 candles)
+        default:
+          return 7;
+      }
+    };
+    
+    const daysBack = startDate ? 0 : getDaysForTimespan(span, mult);
     const startDefault = new Date();
-    startDefault.setDate(startDefault.getDate() - 7);
+    startDefault.setDate(startDefault.getDate() - daysBack);
     const start = startDate || startDefault.toISOString().split('T')[0];
 
-    console.log(`Fetching ${type} ${pair} data from ${start} to ${end}`);
+    console.log(`Fetching ${type} ${pair} data from ${start} to ${end} (${span}/${mult})`);
 
     // Polygon uses different ticker formats:
     // Forex: C:EURUSD
@@ -42,7 +67,7 @@ serve(async (req) => {
     const tickerPrefix = type === 'crypto' ? 'X' : 'C';
     const ticker = `${tickerPrefix}:${fromCurrency}${toCurrency}`;
     
-    const url = `https://api.polygon.io/v2/aggs/ticker/${ticker}/range/${mult}/${span}/${start}/${end}?adjusted=true&sort=asc&limit=5000&apiKey=${apiKey}`;
+    const url = `https://api.polygon.io/v2/aggs/ticker/${ticker}/range/${mult}/${span}/${start}/${end}?adjusted=true&sort=asc&limit=50000&apiKey=${apiKey}`;
     
     const response = await fetch(url);
     const data = await response.json();
@@ -108,7 +133,20 @@ serve(async (req) => {
 
       if (ts !== null && typeof price === 'number' && Number.isFinite(price)) {
         const tsSec = Math.floor(ts > 1e12 ? ts / 1000 : ts);
-        const bucketSeconds = span === 'day' ? 86400 * mult : span === 'hour' ? 3600 * mult : 1;
+        
+        // Calculate bucket size for all supported timespans
+        const getBucketSeconds = (timespan: string, multiplier: number): number => {
+          switch (timespan) {
+            case 'minute': return 60 * multiplier;
+            case 'hour': return 3600 * multiplier;
+            case 'day': return 86400 * multiplier;
+            case 'week': return 604800 * multiplier;
+            case 'month': return 2592000 * multiplier; // ~30 days
+            default: return 3600 * multiplier;
+          }
+        };
+        
+        const bucketSeconds = getBucketSeconds(span, mult);
         const candleTime = Math.floor(tsSec / bucketSeconds) * bucketSeconds;
 
         if (candles.length > 0) {

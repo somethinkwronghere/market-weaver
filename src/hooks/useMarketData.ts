@@ -45,11 +45,26 @@ function parseTimestampStringToSeconds(input: string | undefined): number {
   return normalizeTimestampToSeconds(ms);
 }
 
+// Get aggregation multiplier based on timeframe (relative to 1H base data)
+function getAggregationMultiplier(timeframe: Timeframe): number {
+  switch (timeframe) {
+    case '1M': return 1;    // No aggregation for minute data
+    case '5M': return 1;
+    case '15M': return 1;
+    case '1H': return 1;
+    case '4H': return 4;
+    case '1D': return 24;
+    case '1W': return 168;  // 24 * 7
+    case '1MO': return 720; // ~30 days
+    default: return 1;
+  }
+}
+
 // Aggregate candles based on timeframe
 function aggregateCandles(candles: OHLCData[], timeframe: Timeframe): OHLCData[] {
-  if (timeframe === "1H" || candles.length === 0) return candles;
+  const multiplier = getAggregationMultiplier(timeframe);
+  if (multiplier === 1 || candles.length === 0) return candles;
 
-  const multiplier = timeframe === "4H" ? 4 : 24;
   const aggregated: OHLCData[] = [];
 
   for (let i = 0; i < candles.length; i += multiplier) {
@@ -141,9 +156,14 @@ export function useMarketData() {
 
       try {
         const timespanMap: Record<Timeframe, { multiplier: number; timespan: string }> = {
+          "1M": { multiplier: 1, timespan: "minute" },
+          "5M": { multiplier: 5, timespan: "minute" },
+          "15M": { multiplier: 15, timespan: "minute" },
           "1H": { multiplier: 1, timespan: "hour" },
           "4H": { multiplier: 4, timespan: "hour" },
           "1D": { multiplier: 1, timespan: "day" },
+          "1W": { multiplier: 1, timespan: "week" },
+          "1MO": { multiplier: 1, timespan: "month" },
         };
 
         const { multiplier, timespan } = timespanMap[timeframe];
