@@ -23,6 +23,28 @@ function normalizeTimestampToSeconds(t: number): number {
   return Math.floor(seconds);
 }
 
+function parseTimestampStringToSeconds(input: string | undefined): number {
+  if (!input) return 0;
+  const s = String(input).trim();
+  if (!s) return 0;
+
+  // Numeric epoch (seconds or ms)
+  if (/^\d+(?:\.\d+)?$/.test(s)) {
+    const n = Number(s);
+    if (!Number.isFinite(n)) return 0;
+    return normalizeTimestampToSeconds(n);
+  }
+
+  // Cross-browser ISO normalization.
+  // CSV timestamps look like: "2024-01-01 00:00:00" (no timezone).
+  const isoBase = s.replace(" ", "T");
+  const hasTimezone = /(?:Z|[+-]\d{2}:?\d{2})$/.test(isoBase);
+  const iso = hasTimezone ? isoBase : `${isoBase}Z`; // treat as UTC when TZ is missing
+
+  const ms = new Date(iso).getTime();
+  return normalizeTimestampToSeconds(ms);
+}
+
 // Aggregate candles based on timeframe
 function aggregateCandles(candles: OHLCData[], timeframe: Timeframe): OHLCData[] {
   if (timeframe === "1H" || candles.length === 0) return candles;
@@ -172,7 +194,7 @@ export function useMarketData() {
         console.error("Failed to load Polygon data:", err);
         const errorMsg = err instanceof Error ? err.message : "Failed to load Polygon data";
         setError(errorMsg);
-        
+
         // Fallback: if we have no visible data and CSV is loaded, show CSV data as "live" view
         if (
           playbackStateRef.current === "idle" &&
@@ -203,74 +225,129 @@ export function useMarketData() {
 
       const csvText = await response.text();
 
+      const applyCandles = (candles: OHLCData[]) => {
+        if (candles.length === 0) {
+          setError("CSV parse produced 0 candles");
+          setIsCsvLoaded(false);
+          return;
+        }
+
+        setRawCsvCandles(candles);
+
+        const aggregated = aggregateCandles(candles, timeframe).sort((a, b) => a.time - b.time);
+        setCsvCandles(aggregated);
+        setIsCsvLoaded(true);
+
+        // If user hit play before CSV finished loading, ensure at least 1 bar becomes visible.
+        if (playbackStateRef.current !== "idle" && aggregated.length > 0) {
+          setVisibleCandles((prev) => (prev.length === 0 ? [aggregated[0]] : prev));
+        }
+
+        // If we're in idle mode and have no visible candles yet, show CSV as fallback
+        if (playbackStateRef.current === "idle") {
+          setVisibleCandles((prev) => {
+            if (prev.length === 0) {
+              console.log("Showing CSV data as initial fallback");
+              setLiveCandles(aggregated);
+              setIsLive(false);
+              setDataSource("csv");
+              setDataUpdatedAt(Date.now());
+              return aggregated;
+            }
+            return prev;
+          });
+        }
+
+        console.log(`Loaded ${aggregated.length} CSV candles for playback`);
+      };
+
+      // 1) Try header-based parse (works when CSV has a real timestamp header).
       Papa.parse<CSVRow>(csvText, {
         header: true,
+        skipEmptyLines: true,
         complete: (results) => {
+          const known = new Set(["Open", "High", "Low", "Close", "Volume"]);
+
           const candles: OHLCData[] = results.data
-            .filter((row) => {
-              // First column could be "" or first key in row
-              const keys = Object.keys(row);
-              const timestampKey = keys[0];
-              return timestampKey && row[timestampKey] && row.Open;
-            })
             .map((row) => {
-              // Get timestamp from first column (whatever its name)
               const keys = Object.keys(row);
-              const timestampStr = row[keys[0]];
-              // Parse date in a cross-browser compatible way (replace space with T for ISO)
-              const isoStr = timestampStr.replace(" ", "T");
-              const timestamp = new Date(isoStr).getTime();
-              
+              const tsKey = keys.find((k) => !known.has(k) && row[k]) || "";
+              // If we couldn't find a timestamp key, we'll try the index-based fallback below.
+              if (!tsKey) return null;
+
+              const t = parseTimestampStringToSeconds(row[tsKey]);
+              if (!t) return null;
+
+              const open = parseFloat(row.Open);
+              const high = parseFloat(row.High);
+              const low = parseFloat(row.Low);
+              const close = parseFloat(row.Close);
+              const volume = parseFloat(row.Volume);
+
+              if (![open, high, low, close].every(Number.isFinite)) return null;
+
               return {
-                time: normalizeTimestampToSeconds(timestamp),
-                open: parseFloat(row.Open),
-                high: parseFloat(row.High),
-                low: parseFloat(row.Low),
-                close: parseFloat(row.Close),
-                volume: parseFloat(row.Volume),
-              };
+                time: t,
+                open,
+                high,
+                low,
+                close,
+                volume: Number.isFinite(volume) ? volume : 0,
+              } satisfies OHLCData;
             })
-            .filter((c) =>
-              Number.isFinite(c.time) &&
-              Number.isFinite(c.open) &&
-              Number.isFinite(c.high) &&
-              Number.isFinite(c.low) &&
-              Number.isFinite(c.close)
-            )
+            .filter((c): c is OHLCData => !!c)
             .sort((a, b) => a.time - b.time);
 
-          setRawCsvCandles(candles);
-
-          const aggregated = aggregateCandles(candles, timeframe).sort((a, b) => a.time - b.time);
-          setCsvCandles(aggregated);
-          setIsCsvLoaded(true);
-
-          // If user hit play before CSV finished loading, ensure at least 1 bar becomes visible.
-          if (playbackStateRef.current !== "idle" && aggregated.length > 0) {
-            setVisibleCandles((prev) => (prev.length === 0 ? [aggregated[0]] : prev));
-          }
-          
-          // If we're in idle mode and have no visible candles yet, show CSV as fallback
-          if (playbackStateRef.current === "idle") {
-            setVisibleCandles((prev) => {
-              if (prev.length === 0) {
-                console.log("Showing CSV data as initial fallback");
-                setLiveCandles(aggregated);
-                setIsLive(false);
-                setDataSource("csv");
-                setDataUpdatedAt(Date.now());
-                return aggregated;
-              }
-              return prev;
-            });
+          if (candles.length > 0) {
+            applyCandles(candles);
+            return;
           }
 
-          console.log(`Loaded ${aggregated.length} CSV candles for playback`);
+          // 2) Fallback: index-based parse for files like:
+          // ,Open,High,Low,Close,Volume
+          // 2024-01-01 00:00:00,1.23,1.24,...
+          Papa.parse<string[]>(csvText, {
+            header: false,
+            skipEmptyLines: true,
+            complete: (r) => {
+              const rows = (r.data || []).filter((row) => Array.isArray(row) && row.length >= 5);
+              const body = rows.slice(1); // drop header row
+
+              const candles2: OHLCData[] = body
+                .map((row) => {
+                  const ts = row[0];
+                  const t = parseTimestampStringToSeconds(ts);
+                  if (!t) return null;
+
+                  const open = parseFloat(row[1]);
+                  const high = parseFloat(row[2]);
+                  const low = parseFloat(row[3]);
+                  const close = parseFloat(row[4]);
+                  const volume = row[5] ? parseFloat(row[5]) : 0;
+
+                  if (![open, high, low, close].every(Number.isFinite)) return null;
+
+                  return {
+                    time: t,
+                    open,
+                    high,
+                    low,
+                    close,
+                    volume: Number.isFinite(volume) ? volume : 0,
+                  } satisfies OHLCData;
+                })
+                .filter((c): c is OHLCData => !!c)
+                .sort((a, b) => a.time - b.time);
+
+              applyCandles(candles2);
+            },
+          });
         },
       });
     } catch (e) {
       console.error("Failed to load CSV data:", e);
       setError(e instanceof Error ? e.message : "Failed to load CSV data");
+      setIsCsvLoaded(false);
     }
   }, [timeframe, isCsvLoaded]);
 
