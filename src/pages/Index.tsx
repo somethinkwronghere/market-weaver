@@ -7,6 +7,7 @@ import { TradingPanel } from '@/components/TradingPanel';
 import { AccountPanel } from '@/components/AccountPanel';
 import { DrawingToolbar, DrawingTool } from '@/components/DrawingToolbar';
 import { TimeframeSelector, Timeframe } from '@/components/TimeframeSelector';
+import { PairSelector, TradingPair } from '@/components/PairSelector';
 import { RSIPanel, MACDPanel, StochasticPanel, ATRPanel, VolumePanel } from '@/components/IndicatorPanel';
 import { useMarketData } from '@/hooks/useMarketData';
 import { useTradingEngine } from '@/hooks/useTradingEngine';
@@ -30,6 +31,7 @@ const Index = () => {
     isLoading,
     isLive,
     isInPlaybackMode,
+    pair,
     dataSource,
     dataUpdatedAt,
     liveIsStale,
@@ -42,6 +44,7 @@ const Index = () => {
     jumpTo,
     setSpeed,
     setTimeframe: setMarketTimeframe,
+    setPair,
   } = useMarketData();
 
   const {
@@ -64,6 +67,11 @@ const Index = () => {
   const handleTimeframeChange = (tf: Timeframe) => {
     setTimeframe(tf);
     setMarketTimeframe(tf);
+  };
+
+  const handlePairChange = (newPair: TradingPair) => {
+    setPair(newPair);
+    toast.info(`${newPair} seçildi`);
   };
 
   const handleAddDrawing = useCallback((drawing: DrawingLine) => {
@@ -118,6 +126,10 @@ const Index = () => {
           {/* Toolbar */}
           <div className="h-10 bg-[#0a0e17] border-b border-[#1a2332] flex items-center justify-between px-4">
             <div className="flex items-center gap-4">
+              <PairSelector
+                activePair={pair}
+                onPairChange={handlePairChange}
+              />
               <DrawingToolbar 
                 activeTool={drawingTool}
                 onToolChange={setDrawingTool}
@@ -140,27 +152,6 @@ const Index = () => {
                           minute: '2-digit',
                         })}`
                       : ''}
-                    {dataUpdatedAt
-                      ? ` • güncellendi: ${new Date(dataUpdatedAt).toLocaleTimeString('tr-TR', {
-                          hour: '2-digit',
-                          minute: '2-digit',
-                          second: '2-digit',
-                        })}`
-                      : ''}
-                  </span>
-                </div>
-              )}
-              {!isInPlaybackMode && liveIsStale && liveLastCandleTime && (
-                <div className="flex items-center gap-1.5 px-2 py-1 bg-destructive/15 rounded text-destructive text-xs font-medium">
-                  <Radio className="w-3 h-3" />
-                  <span>
-                    CANLI GECİKMELİ • son: {new Date(liveLastCandleTime * 1000).toLocaleString('tr-TR', {
-                      day: '2-digit',
-                      month: 'short',
-                      year: 'numeric',
-                      hour: '2-digit',
-                      minute: '2-digit',
-                    })}
                   </span>
                 </div>
               )}

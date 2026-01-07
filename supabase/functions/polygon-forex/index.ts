@@ -13,17 +13,20 @@ serve(async (req) => {
   }
 
   try {
-    const { from, to, multiplier, timespan, startDate, endDate } = await req.json();
+    const { from, to, multiplier, timespan, startDate, endDate, assetType } = await req.json();
     
     const apiKey = Deno.env.get('POLYGON_API_KEY');
     if (!apiKey) {
       throw new Error('POLYGON_API_KEY not configured');
     }
 
-    // Default values for EUR/USD hourly data
-    const pair = `${from || 'EUR'}/${to || 'USD'}`;
+    // Default values
+    const fromCurrency = from || 'EUR';
+    const toCurrency = to || 'USD';
+    const pair = `${fromCurrency}/${toCurrency}`;
     const mult = multiplier || 1;
     const span = timespan || 'hour';
+    const type = assetType || 'forex'; // 'forex' or 'crypto'
     
     // Calculate date range - last 30 days by default
     const end = endDate || new Date().toISOString().split('T')[0];
@@ -31,9 +34,15 @@ serve(async (req) => {
     startDefault.setDate(startDefault.getDate() - 30);
     const start = startDate || startDefault.toISOString().split('T')[0];
 
-    console.log(`Fetching ${pair} data from ${start} to ${end}`);
+    console.log(`Fetching ${type} ${pair} data from ${start} to ${end}`);
 
-    const url = `https://api.polygon.io/v2/aggs/ticker/C:${from || 'EUR'}${to || 'USD'}/range/${mult}/${span}/${start}/${end}?adjusted=true&sort=asc&limit=5000&apiKey=${apiKey}`;
+    // Polygon uses different ticker formats:
+    // Forex: C:EURUSD
+    // Crypto: X:BTCUSD
+    const tickerPrefix = type === 'crypto' ? 'X' : 'C';
+    const ticker = `${tickerPrefix}:${fromCurrency}${toCurrency}`;
+    
+    const url = `https://api.polygon.io/v2/aggs/ticker/${ticker}/range/${mult}/${span}/${start}/${end}?adjusted=true&sort=asc&limit=5000&apiKey=${apiKey}`;
     
     const response = await fetch(url);
     const data = await response.json();
@@ -68,10 +77,16 @@ serve(async (req) => {
       volume: bar.v || 0,
     }));
 
-    // Some Polygon plans return delayed aggregates for FX.
+    // Some Polygon plans return delayed aggregates.
     // Try to augment with a fresh "last quote" and patch/append the latest candle if possible.
+    // Note: Different endpoints for forex vs crypto
     try {
-      const lastQuoteUrl = `https://api.polygon.io/v1/last_quote/currencies/${from || 'EUR'}/${to || 'USD'}?apiKey=${apiKey}`;
+      let lastQuoteUrl: string;
+      if (type === 'crypto') {
+        lastQuoteUrl = `https://api.polygon.io/v1/last/crypto/${fromCurrency}/${toCurrency}?apiKey=${apiKey}`;
+      } else {
+        lastQuoteUrl = `https://api.polygon.io/v1/last_quote/currencies/${fromCurrency}/${toCurrency}?apiKey=${apiKey}`;
+      }
       const lastQuoteRes = await fetch(lastQuoteUrl);
       const lastQuoteData = await lastQuoteRes.json();
 
