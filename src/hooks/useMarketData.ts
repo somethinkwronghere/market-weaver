@@ -2,6 +2,7 @@ import { useState, useCallback, useRef, useEffect } from "react";
 import Papa from "papaparse";
 import { OHLCData, PlaybackSpeed } from "@/types/trading";
 import { Timeframe } from "@/components/TimeframeSelector";
+import { TradingPair } from "@/components/PairSelector";
 import { supabase } from "@/integrations/supabase/client";
 
 interface CSVRow {
@@ -68,8 +69,9 @@ export function useMarketData() {
   const [isLoading, setIsLoading] = useState(true);
   const [isCsvLoaded, setIsCsvLoaded] = useState(false);
 
-  // Timeframe
+  // Timeframe and pair
   const [timeframe, setTimeframe] = useState<Timeframe>("1H");
+  const [pair, setPair] = useState<TradingPair>("EUR/USD");
 
   // UI flags
   const [isLive, setIsLive] = useState(false);
@@ -84,6 +86,7 @@ export function useMarketData() {
   const lastApiCallRef = useRef<number>(0);
   const didInitRef = useRef(false);
   const prevTimeframeRef = useRef<Timeframe>("1H");
+  const prevPairRef = useRef<TradingPair>("EUR/USD");
 
   // Keep ref in sync with state
   useEffect(() => {
@@ -123,12 +126,17 @@ export function useMarketData() {
 
         const { multiplier, timespan } = timespanMap[timeframe];
 
+        // Parse pair to get from/to currencies and asset type
+        const [fromCurrency, toCurrency] = pair.split("/");
+        const assetType = fromCurrency === "BTC" || fromCurrency === "ETH" ? "crypto" : "forex";
+
         const { data, error: fnError } = await supabase.functions.invoke("polygon-forex", {
           body: {
-            from: "EUR",
-            to: "USD",
+            from: fromCurrency,
+            to: toCurrency,
             multiplier,
             timespan,
+            assetType,
           },
         });
 
@@ -184,7 +192,7 @@ export function useMarketData() {
         if (!opts?.silent) setIsLoading(false);
       }
     },
-    [timeframe, apiRateLimited, visibleCandles.length, csvCandles]
+    [timeframe, pair, apiRateLimited, visibleCandles.length, csvCandles]
   );
 
   // Load CSV data for playback
@@ -332,6 +340,26 @@ export function useMarketData() {
     }
   }, [timeframe, rawCsvCandles, loadPolygonData, apiRateLimited]);
 
+  // Handle pair changes
+  useEffect(() => {
+    const prevP = prevPairRef.current;
+    if (prevP === pair) return;
+    prevPairRef.current = pair;
+
+    // Reset to idle and reload data for new pair
+    if (playbackStateRef.current !== "idle") {
+      setPlaybackState("idle");
+    }
+    setCurrentIndex(0);
+    setVisibleCandles([]);
+    setLiveCandles([]);
+    
+    // Reload live data with new pair
+    if (!apiRateLimited) {
+      loadPolygonData({ force: true });
+    }
+  }, [pair, loadPolygonData, apiRateLimited]);
+
   const addNextCandle = useCallback(() => {
     if (csvCandles.length === 0) return;
 
@@ -478,6 +506,7 @@ export function useMarketData() {
     speed,
     isLoading,
     timeframe,
+    pair,
     isLive,
     dataSource,
     dataUpdatedAt,
@@ -492,5 +521,6 @@ export function useMarketData() {
     jumpTo,
     setSpeed,
     setTimeframe,
+    setPair,
   };
 }
