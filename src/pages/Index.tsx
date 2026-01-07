@@ -172,6 +172,7 @@ const Index = () => {
               onAddDrawing={handleAddDrawing}
               positions={tradingState.positions}
               bollingerBands={bollingerBands}
+              pair={pair}
             />
           </div>
 

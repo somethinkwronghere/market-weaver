@@ -16,6 +16,17 @@ interface CandlestickChartProps {
   bollingerBands?: BollingerData[];
   onUpdatePositionSl?: (positionId: string, newSl: number) => void;
   onUpdatePositionTp?: (positionId: string, newTp: number) => void;
+  pair?: string;
+}
+
+// Get price format based on asset type
+function getPriceFormat(pair?: string) {
+  const isCrypto = pair?.startsWith('BTC') || pair?.startsWith('ETH');
+  if (isCrypto) {
+    return { precision: 2, minMove: 0.01 };
+  }
+  // Forex pairs (EUR/USD, GBP/USD, etc.)
+  return { precision: 5, minMove: 0.00001 };
 }
 
 export function CandlestickChart({ 
@@ -27,7 +38,9 @@ export function CandlestickChart({
   bollingerBands = [],
   onUpdatePositionSl,
   onUpdatePositionTp,
+  pair,
 }: CandlestickChartProps) {
+  const priceFormat = getPriceFormat(pair);
   const containerRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<IChartApi | null>(null);
   const seriesRef = useRef<ISeriesApi<'Candlestick'> | null>(null);
@@ -75,7 +88,7 @@ export function CandlestickChart({
         textColor: '#6b7a8f',
       },
       localization: {
-        priceFormatter: (price: number) => price.toFixed(5),
+        priceFormatter: (price: number) => price.toFixed(priceFormat.precision),
       },
       timeScale: {
         borderColor: '#1a2332',
@@ -111,8 +124,8 @@ export function CandlestickChart({
       wickDownColor: '#ff5252',
       priceFormat: {
         type: 'price',
-        precision: 5,
-        minMove: 0.00001,
+        precision: priceFormat.precision,
+        minMove: priceFormat.minMove,
       },
     });
 
@@ -164,7 +177,7 @@ export function CandlestickChart({
       window.removeEventListener('resize', handleResize);
       chart.remove();
     };
-  }, []);
+  }, [pair, priceFormat.precision, priceFormat.minMove]);
 
   // Handle drawing tool clicks
   useEffect(() => {
