@@ -30,6 +30,8 @@ const Index = () => {
     isLoading,
     isLive,
     isInPlaybackMode,
+    dataSource,
+    dataUpdatedAt,
     liveIsStale,
     liveLastCandleTime,
     play,
@@ -95,12 +97,12 @@ const Index = () => {
     setDrawings([]);
   };
 
-  if (isLoading) {
+  if (isLoading && visibleCandles.length === 0) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-[#050810]">
         <div className="flex flex-col items-center gap-4">
           <Loader2 className="w-8 h-8 animate-spin text-blue-500" />
-          <p className="text-muted-foreground">Loading synthetic market data...</p>
+          <p className="text-muted-foreground">Piyasa verisi yükleniyor...</p>
         </div>
       </div>
     );
@@ -121,13 +123,33 @@ const Index = () => {
                 onToolChange={setDrawingTool}
                 onClearDrawings={handleClearDrawings}
               />
-              {isLive && (
-                <div className="flex items-center gap-1.5 px-2 py-1 bg-emerald-500/20 rounded text-emerald-400 text-xs font-medium animate-pulse">
+              {!isInPlaybackMode && (
+                <div
+                  className={
+                    dataSource === 'polygon'
+                      ? 'flex items-center gap-1.5 px-2 py-1 bg-emerald-500/20 rounded text-emerald-400 text-xs font-medium'
+                      : 'flex items-center gap-1.5 px-2 py-1 bg-amber-500/20 rounded text-amber-400 text-xs font-medium'
+                  }
+                >
                   <Radio className="w-3 h-3" />
-                  LIVE - Synthetic Data
+                  <span>
+                    {dataSource === 'polygon' ? 'CANLI • Polygon' : 'CSV • Yedek'}
+                    {liveLastCandleTime
+                      ? ` • son mum: ${new Date(liveLastCandleTime * 1000).toLocaleTimeString('tr-TR', {
+                          hour: '2-digit',
+                          minute: '2-digit',
+                        })}`
+                      : ''}
+                    {dataUpdatedAt
+                      ? ` • güncellendi: ${new Date(dataUpdatedAt).toLocaleTimeString('tr-TR', {
+                          hour: '2-digit',
+                          minute: '2-digit',
+                          second: '2-digit',
+                        })}`
+                      : ''}
+                  </span>
                 </div>
               )}
-
               {!isInPlaybackMode && liveIsStale && liveLastCandleTime && (
                 <div className="flex items-center gap-1.5 px-2 py-1 bg-destructive/15 rounded text-destructive text-xs font-medium">
                   <Radio className="w-3 h-3" />
