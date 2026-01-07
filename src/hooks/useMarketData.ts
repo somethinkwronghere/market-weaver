@@ -71,8 +71,10 @@ export function useMarketData() {
   // Timeframe
   const [timeframe, setTimeframe] = useState<Timeframe>("1H");
 
-  // UI flags (kept for compatibility; we no longer generate infinite synthetic candles)
+  // UI flags
   const [isLive, setIsLive] = useState(false);
+  const [dataSource, setDataSource] = useState<"polygon" | "csv">("csv");
+  const [dataUpdatedAt, setDataUpdatedAt] = useState<number | null>(null);
 
   const [error, setError] = useState<string | null>(null);
   const [apiRateLimited, setApiRateLimited] = useState(false);
@@ -150,25 +152,33 @@ export function useMarketData() {
         if (candles.length === 0) throw new Error("No data returned from Polygon API");
 
         setLiveCandles(candles);
+        setIsLive(true);
+        setDataSource("polygon");
+        setDataUpdatedAt(Date.now());
 
         // When idle, always show live candles
         if (playbackStateRef.current === "idle") {
           setVisibleCandles(candles);
         }
 
-        console.log(
-          `Loaded ${candles.length} candles from Polygon API`
-        );
+        console.log(`Loaded ${candles.length} candles from Polygon API`);
       } catch (err) {
         console.error("Failed to load Polygon data:", err);
         const errorMsg = err instanceof Error ? err.message : "Failed to load Polygon data";
         setError(errorMsg);
         
         // Fallback: if we have no visible data and CSV is loaded, show CSV data as "live" view
-        if (playbackStateRef.current === "idle" && visibleCandles.length === 0 && csvCandles.length > 0) {
+        if (
+          playbackStateRef.current === "idle" &&
+          visibleCandles.length === 0 &&
+          csvCandles.length > 0
+        ) {
           console.log("Using CSV data as fallback for live view");
           setVisibleCandles(csvCandles);
           setLiveCandles(csvCandles);
+          setIsLive(false);
+          setDataSource("csv");
+          setDataUpdatedAt(Date.now());
         }
       } finally {
         if (!opts?.silent) setIsLoading(false);
@@ -240,6 +250,9 @@ export function useMarketData() {
               if (prev.length === 0) {
                 console.log("Showing CSV data as initial fallback");
                 setLiveCandles(aggregated);
+                setIsLive(false);
+                setDataSource("csv");
+                setDataUpdatedAt(Date.now());
                 return aggregated;
               }
               return prev;
@@ -466,6 +479,8 @@ export function useMarketData() {
     isLoading,
     timeframe,
     isLive,
+    dataSource,
+    dataUpdatedAt,
     liveLastCandleTime,
     liveIsStale,
     error,
