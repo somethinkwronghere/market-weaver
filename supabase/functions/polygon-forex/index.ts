@@ -28,10 +28,10 @@ serve(async (req) => {
     const span = timespan || 'hour';
     const type = assetType || 'forex'; // 'forex' or 'crypto'
     
-    // Calculate date range - last 30 days by default
+    // Calculate date range - last 7 days for hourly data (cleaner candles)
     const end = endDate || new Date().toISOString().split('T')[0];
     const startDefault = new Date();
-    startDefault.setDate(startDefault.getDate() - 30);
+    startDefault.setDate(startDefault.getDate() - 7);
     const start = startDate || startDefault.toISOString().split('T')[0];
 
     console.log(`Fetching ${type} ${pair} data from ${start} to ${end}`);

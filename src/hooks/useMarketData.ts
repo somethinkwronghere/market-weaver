@@ -126,9 +126,8 @@ export function useMarketData() {
 
         const { multiplier, timespan } = timespanMap[timeframe];
 
-        // Parse pair to get from/to currencies and asset type
+        // Parse pair to get from/to currencies
         const [fromCurrency, toCurrency] = pair.split("/");
-        const assetType = fromCurrency === "BTC" || fromCurrency === "ETH" ? "crypto" : "forex";
 
         const { data, error: fnError } = await supabase.functions.invoke("polygon-forex", {
           body: {
@@ -136,7 +135,6 @@ export function useMarketData() {
             to: toCurrency,
             multiplier,
             timespan,
-            assetType,
           },
         });
 
