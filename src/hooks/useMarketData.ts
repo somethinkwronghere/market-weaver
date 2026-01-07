@@ -462,27 +462,18 @@ export function useMarketData() {
       // Stop at the end of CSV (no infinite synthetic extension)
       if (prev >= csvCandles.length - 1) {
         setPlaybackState("paused");
-        // Keep live candles + all CSV candles
-        setVisibleCandles(current => {
-          const liveCount = liveCandles.length;
-          if (liveCount > 0) {
-            return [...liveCandles, ...csvCandles];
-          }
-          return csvCandles;
-        });
         setIsLive(false);
         return prev;
       }
 
       const nextIndex = prev + 1;
-      // Append next CSV candle to visible candles (which includes live + previous CSV)
+      // Build visible candles from current state - csvCandles are already time-adjusted
       setVisibleCandles(current => {
-        // If we have live candles at the beginning, keep them
-        const liveCount = liveCandles.length;
-        if (liveCount > 0) {
-          return [...liveCandles, ...csvCandles.slice(0, nextIndex + 1)];
-        }
-        return csvCandles.slice(0, nextIndex + 1);
+        // Find where live candles end and CSV starts by checking timestamps
+        const newCandle = csvCandles[nextIndex];
+        // Append the next CSV candle, ensuring sorted order
+        const combined = [...current, newCandle];
+        return combined.sort((a, b) => a.time - b.time);
       });
 
       if (nextIndex >= csvCandles.length - 1) {
@@ -491,7 +482,7 @@ export function useMarketData() {
 
       return nextIndex;
     });
-  }, [csvCandles, liveCandles]);
+  }, [csvCandles]);
 
   // Play - start CSV playback, continuing from live data
   const play = useCallback(() => {
