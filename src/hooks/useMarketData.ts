@@ -365,13 +365,28 @@ export function useMarketData() {
       // Stop at the end of CSV (no infinite synthetic extension)
       if (prev >= csvCandles.length - 1) {
         setPlaybackState("paused");
-        setVisibleCandles(csvCandles);
+        // Keep live candles + all CSV candles
+        setVisibleCandles(current => {
+          const liveCount = liveCandles.length;
+          if (liveCount > 0) {
+            return [...liveCandles, ...csvCandles];
+          }
+          return csvCandles;
+        });
         setIsLive(false);
         return prev;
       }
 
       const nextIndex = prev + 1;
-      setVisibleCandles(csvCandles.slice(0, nextIndex + 1));
+      // Append next CSV candle to visible candles (which includes live + previous CSV)
+      setVisibleCandles(current => {
+        // If we have live candles at the beginning, keep them
+        const liveCount = liveCandles.length;
+        if (liveCount > 0) {
+          return [...liveCandles, ...csvCandles.slice(0, nextIndex + 1)];
+        }
+        return csvCandles.slice(0, nextIndex + 1);
+      });
 
       if (nextIndex >= csvCandles.length - 1) {
         setPlaybackState("paused");
@@ -379,20 +394,46 @@ export function useMarketData() {
 
       return nextIndex;
     });
-  }, [csvCandles]);
+  }, [csvCandles, liveCandles]);
 
-  // Play - start CSV playback, stop showing live data
+  // Play - start CSV playback, continuing from live data
   const play = useCallback(() => {
-    if (csvCandles.length === 0) return;
+    if (csvCandles.length === 0) {
+      console.log("CSV candles not loaded yet");
+      return;
+    }
 
+    // When transitioning from idle (live view) to playback:
+    // Append CSV data after live candles for seamless continuation
     if (playbackState === "idle") {
-      setCurrentIndex(0);
-      setVisibleCandles([csvCandles[0]]);
+      // Get the last live candle's timestamp to continue from
+      const lastLiveCandle = liveCandles[liveCandles.length - 1];
+      
+      if (lastLiveCandle && liveCandles.length > 0) {
+        // Adjust CSV timestamps to continue after live data
+        const timeOffset = lastLiveCandle.time - csvCandles[0].time + 3600; // 1 hour gap
+        const adjustedCsvCandles = csvCandles.map(c => ({
+          ...c,
+          time: c.time + timeOffset
+        }));
+        
+        // Start with live candles + first synthetic candle
+        const combinedCandles = [...liveCandles, adjustedCsvCandles[0]];
+        setVisibleCandles(combinedCandles);
+        setCurrentIndex(0);
+        
+        // Store adjusted candles for playback
+        setCsvCandles(adjustedCsvCandles);
+      } else {
+        // No live candles, just start from CSV
+        setCurrentIndex(0);
+        setVisibleCandles([csvCandles[0]]);
+      }
       setIsLive(false);
     }
 
     setPlaybackState("playing");
-  }, [playbackState, csvCandles]);
+  }, [playbackState, csvCandles, liveCandles]);
 
   // Pause playback
   const pause = useCallback(() => {
