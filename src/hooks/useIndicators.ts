@@ -37,6 +37,18 @@ export interface VolumeData {
   color: string;
 }
 
+export interface EMAData {
+  time: number;
+  value: number;
+  period: number;
+}
+
+export interface SMAData {
+  time: number;
+  value: number;
+  period: number;
+}
+
 function calculateEMA(data: number[], period: number): number[] {
   const ema: number[] = [];
   const multiplier = 2 / (period + 1);
@@ -245,5 +257,55 @@ export function useIndicators(candles: OHLCData[]) {
     }));
   }, [candles]);
 
-  return { rsi, macd, bollingerBands, stochastic, atr, volume };
+  // Calculate EMA for different periods (common: 9, 12, 20, 26, 50, 200)
+  const ema = useMemo(() => {
+    const closes = candles.map(c => c.close);
+    const periods = [9, 12, 20, 26, 50];
+    const allEmaData: EMAData[] = [];
+
+    periods.forEach(period => {
+      if (closes.length < period) return;
+
+      const emaValues = calculateEMA(closes, period);
+
+      for (let i = period - 1; i < closes.length; i++) {
+        if (emaValues[i] !== undefined) {
+          allEmaData.push({
+            time: candles[i].time,
+            value: emaValues[i]!,
+            period,
+          });
+        }
+      }
+    });
+
+    return allEmaData;
+  }, [candles]);
+
+  // Calculate SMA for different periods (common: 20, 50, 100, 200)
+  const sma = useMemo(() => {
+    const closes = candles.map(c => c.close);
+    const periods = [20, 50, 100, 200];
+    const allSmaData: SMAData[] = [];
+
+    periods.forEach(period => {
+      if (closes.length < period) return;
+
+      const smaValues = calculateSMA(closes, period);
+
+      for (let i = period - 1; i < closes.length; i++) {
+        if (smaValues[i] !== undefined) {
+          allSmaData.push({
+            time: candles[i].time,
+            value: smaValues[i]!,
+            period,
+          });
+        }
+      }
+    });
+
+    return allSmaData;
+  }, [candles]);
+
+  return { rsi, macd, bollingerBands, stochastic, atr, volume, ema, sma };
 }

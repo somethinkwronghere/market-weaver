@@ -3,7 +3,7 @@ import { createChart, IChartApi, ISeriesApi, CandlestickData, Time, LineStyle, I
 import { OHLCData, Position } from '@/types/trading';
 import { DrawingLine } from '@/types/drawing';
 import { DrawingTool } from './DrawingToolbar';
-import { BollingerData } from '@/hooks/useIndicators';
+import { BollingerData, EMAData, SMAData } from '@/hooks/useIndicators';
 import { GripHorizontal } from 'lucide-react';
 
 interface CandlestickChartProps {
@@ -14,6 +14,8 @@ interface CandlestickChartProps {
   onAddDrawing?: (drawing: DrawingLine) => void;
   positions?: Position[];
   bollingerBands?: BollingerData[];
+  emaData?: EMAData[];
+  smaData?: SMAData[];
   onUpdatePositionSl?: (positionId: string, newSl: number) => void;
   onUpdatePositionTp?: (positionId: string, newTp: number) => void;
   pair?: string;
@@ -29,13 +31,15 @@ function getPriceFormat(pair?: string) {
   return { precision: 5, minMove: 0.00001 };
 }
 
-export function CandlestickChart({ 
-  data, 
+export function CandlestickChart({
+  data,
   drawingTool = 'select',
   drawings = [],
   onAddDrawing,
   positions = [],
   bollingerBands = [],
+  emaData = [],
+  smaData = [],
   onUpdatePositionSl,
   onUpdatePositionTp,
   pair,
@@ -48,6 +52,8 @@ export function CandlestickChart({
   const bbUpperRef = useRef<ISeriesApi<'Line'> | null>(null);
   const bbMiddleRef = useRef<ISeriesApi<'Line'> | null>(null);
   const bbLowerRef = useRef<ISeriesApi<'Line'> | null>(null);
+  const emaSeriesRef = useRef<Map<number, ISeriesApi<'Line'>>>(new Map());
+  const smaSeriesRef = useRef<Map<number, ISeriesApi<'Line'>>>(new Map());
   const [drawingStart, setDrawingStart] = useState<{ price: number; time: number } | null>(null);
   const [draggingLine, setDraggingLine] = useState<{ positionId: string; type: 'sl' | 'tp'; startY: number; startPrice: number } | null>(null);
   const [chartDimensions, setChartDimensions] = useState({ width: 0, height: 0 });
@@ -242,6 +248,103 @@ export function CandlestickChart({
       bbLowerRef.current?.setData(bollingerBands.map(d => ({ time: d.time as Time, value: d.lower })));
     }
   }, [bollingerBands]);
+
+  // Handle EMA overlays
+  useEffect(() => {
+    if (!chartRef.current) return;
+
+    // Group EMA data by period
+    const emaByPeriod = new Map<number, EMAData[]>();
+    emaData.forEach(d => {
+      if (!emaByPeriod.has(d.period)) {
+        emaByPeriod.set(d.period, []);
+      }
+      emaByPeriod.get(d.period)!.push(d);
+    });
+
+    // Remove old EMA series that are no longer needed
+    const currentPeriods = new Set(emaByPeriod.keys());
+    emaSeriesRef.current.forEach((series, period) => {
+      if (!currentPeriods.has(period)) {
+        try {
+          chartRef.current?.removeSeries(series);
+        } catch (e) {}
+        emaSeriesRef.current.delete(period);
+      }
+    });
+
+    // Create or update EMA series
+    emaByPeriod.forEach((data, period) => {
+      let series = emaSeriesRef.current.get(period);
+
+      if (!series && chartRef.current) {
+        // Create new series with unique color based on period
+        const colors = ['#f59e0b', '#8b5cf6', '#06b6d4', '#ec4899', '#14b8a6'];
+        const colorIndex = period % colors.length;
+        series = chartRef.current.addLineSeries({
+          color: colors[colorIndex],
+          lineWidth: 2,
+          priceLineVisible: false,
+          lastValueVisible: true,
+          title: `EMA(${period})`,
+        });
+        emaSeriesRef.current.set(period, series);
+      }
+
+      if (series) {
+        series.setData(data.map(d => ({ time: d.time as Time, value: d.value })));
+      }
+    });
+  }, [emaData]);
+
+  // Handle SMA overlays
+  useEffect(() => {
+    if (!chartRef.current) return;
+
+    // Group SMA data by period
+    const smaByPeriod = new Map<number, SMAData[]>();
+    smaData.forEach(d => {
+      if (!smaByPeriod.has(d.period)) {
+        smaByPeriod.set(d.period, []);
+      }
+      smaByPeriod.get(d.period)!.push(d);
+    });
+
+    // Remove old SMA series that are no longer needed
+    const currentPeriods = new Set(smaByPeriod.keys());
+    smaSeriesRef.current.forEach((series, period) => {
+      if (!currentPeriods.has(period)) {
+        try {
+          chartRef.current?.removeSeries(series);
+        } catch (e) {}
+        smaSeriesRef.current.delete(period);
+      }
+    });
+
+    // Create or update SMA series
+    smaByPeriod.forEach((data, period) => {
+      let series = smaSeriesRef.current.get(period);
+
+      if (!series && chartRef.current) {
+        // Create new series with unique color based on period
+        const colors = ['#22c55e', '#eab308', '#a855f7', '#f472b6', '#22d3ee'];
+        const colorIndex = period % colors.length;
+        series = chartRef.current.addLineSeries({
+          color: colors[colorIndex],
+          lineWidth: 2,
+          lineStyle: LineStyle.Dashed,
+          priceLineVisible: false,
+          lastValueVisible: true,
+          title: `SMA(${period})`,
+        });
+        smaSeriesRef.current.set(period, series);
+      }
+
+      if (series) {
+        series.setData(data.map(d => ({ time: d.time as Time, value: d.value })));
+      }
+    });
+  }, [smaData]);
 
   // Update price lines for drawings and positions
   useEffect(() => {

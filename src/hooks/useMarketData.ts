@@ -136,15 +136,15 @@ export function useMarketData() {
       // When playback starts, stop pulling live data.
       if (!opts?.force && playbackStateRef.current !== "idle") return;
 
-      // Rate limit protection: minimum 30 seconds between API calls
+      // Rate limit protection: minimum 10 seconds between API calls
       const now = Date.now();
-      if (now - lastApiCallRef.current < 30000 && !opts?.force) {
+      if (now - lastApiCallRef.current < 10000 && !opts?.force) {
         console.log("Skipping API call - rate limit protection");
         return;
       }
 
-      // If already rate limited, don't try again for 60 seconds
-      if (apiRateLimited && now - lastApiCallRef.current < 60000) {
+      // If already rate limited, don't try again for 20 seconds
+      if (apiRateLimited && now - lastApiCallRef.current < 20000) {
         console.log("Skipping API call - previously rate limited");
         return;
       }
@@ -392,10 +392,10 @@ export function useMarketData() {
   useEffect(() => {
     if (playbackState === "idle" && !apiRateLimited) {
       if (livePollIntervalRef.current) clearInterval(livePollIntervalRef.current);
-      // Poll every 60 seconds to avoid rate limits
+      // Poll every 10 seconds as requested
       livePollIntervalRef.current = setInterval(() => {
         loadPolygonData({ silent: true, force: false });
-      }, 60000);
+      }, 10000);
     } else if (livePollIntervalRef.current) {
       clearInterval(livePollIntervalRef.current);
       livePollIntervalRef.current = null;
@@ -448,7 +448,7 @@ export function useMarketData() {
     setCurrentIndex(0);
     setVisibleCandles([]);
     setLiveCandles([]);
-    
+
     // Reload live data with new pair
     if (!apiRateLimited) {
       loadPolygonData({ force: true });
@@ -496,7 +496,7 @@ export function useMarketData() {
     if (playbackState === "idle") {
       // Get the last live candle's timestamp to continue from
       const lastLiveCandle = liveCandles[liveCandles.length - 1];
-      
+
       if (lastLiveCandle && liveCandles.length > 0) {
         // Adjust CSV timestamps to continue after live data
         const timeOffset = lastLiveCandle.time - csvCandles[0].time + 3600; // 1 hour gap
@@ -504,12 +504,12 @@ export function useMarketData() {
           ...c,
           time: c.time + timeOffset
         }));
-        
+
         // Start with live candles + first synthetic candle
         const combinedCandles = [...liveCandles, adjustedCsvCandles[0]];
         setVisibleCandles(combinedCandles);
         setCurrentIndex(0);
-        
+
         // Store adjusted candles for playback
         setCsvCandles(adjustedCsvCandles);
       } else {

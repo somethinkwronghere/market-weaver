@@ -1,0 +1,44 @@
+FX Replay Style Futures Trading Transformation Plan
+
+1. GOAL DESCRIPTION
+Transform the current single-page market analysis tool into a comprehensive "FX Replay" style application focused on Futures Trading. The simulator will feature professional charting, backtesting, analytics, and social competition features ("Battles").
+
+2. PROPOSED CHANGES
+
+2.1. Core Architecture & Navigation
+Restructure the application to support multiple distinct views.
+- Implement `react-router-dom` with the following routes:
+  - / (redirects to /dashboard or /chart)
+  - /chart (The main Trading Simulator)
+  - /analytics
+  - /dashboard
+  - /live
+  - /strategies
+  - /settings
+
+
+- Create a MainLayout containing the Left Sidebar.
+  - Profile Section: Avatar, Username, Plan (Free/Pro).
+  - Navigation Menu: Testing, Live, Strategies, Settings.
+
+2.2. Chart Page (The "Sim" Engine)
+Refactor `Index.tsx` into a robust `ChartPage`.
+- Top Toolbar: Symbol Search, Time Frames, Candles/Line toggle, Indicators Menu (50+ items), Layout & Snapshot buttons.
+- Left Toolbar (Drawing): Crosshair, Trend Line, Fib Retracement, Patterns (XABCD, Harmonic), Brush, Text, Icons, Magnet/Zoom/Lock.
+- Right Panel (Object Tree & Order):
+  - Order Panel (Futures Focus): Buy/Sell Tabs, Type (Limit/Market), Position Size, Entry, SL, TP.
+  - Object Tree: List of active drawings and indicators.
+- Bottom Panel: Account Balance, Realized/Unrealized PnL, Tabs (Open Positions, Pending, Closed).
+
+2.3. Analytics & Dashboard
+- DashboardPage: Stats Cards (Time Invested, Win Rate), Streak tracking, Simple performance charts.
+- AnalyticsPage: Deep Dive filtering by Asset, Strategy, Time; Advanced PnL analysis.
+
+2.4. Secondary Pages
+- StrategiesPage: List of user strategies, Checklists.
+- AccountSettingsPage: Profile edit, Timezone, Subscription.
+- LivePage: Real-time trading view.
+
+3. VERIFICATION PLAN
+- Automated Tests: Verify routing works. Verify Order Placement adds positions.
+- Manual Verification: Test drawing tools (Trend Line, Fib). Test "Replay" mode. Place Limit/Market orders. Verify Dashboard stats update.
