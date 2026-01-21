@@ -3,6 +3,7 @@ import { Loader2, Radio } from 'lucide-react';
 import { Header } from '@/components/Header';
 import { CandlestickChart } from '@/components/CandlestickChart';
 import { PlaybackControls } from '@/components/PlaybackControls';
+import { FloatingReplayController } from '@/components/FloatingReplayController';
 import { TradingPanel } from '@/components/TradingPanel';
 import { AccountPanel } from '@/components/AccountPanel';
 import { DrawingToolbar, DrawingTool } from '@/components/DrawingToolbar';
@@ -25,6 +26,7 @@ const ChartPage = () => {
   const [drawingTool, setDrawingTool] = useState<DrawingTool>('select');
   const [drawings, setDrawings] = useState<DrawingLine[]>([]);
   const [chartType, setChartType] = useState<ChartType>('lightweight');
+  const [isChartInteractionLocked, setIsChartInteractionLocked] = useState(false);
 
   const {
     indicators,
@@ -67,6 +69,7 @@ const ChartPage = () => {
     closePosition,
     closeAllPositions,
     resetAccount,
+    updatePosition,
   } = useTradingEngine();
 
   const { rsi, macd, bollingerBands, stochastic, atr, volume, ema, sma } = useIndicators(visibleCandles);
@@ -138,6 +141,16 @@ const ChartPage = () => {
     toast.success(`${config.name} added to chart`);
   };
 
+  const handleUpdatePositionSl = useCallback((positionId: string, newSl: number) => {
+    updatePosition(positionId, { stopLoss: newSl });
+    toast.info(`SL güncellendi: ${newSl.toFixed(5)}`);
+  }, [updatePosition]);
+
+  const handleUpdatePositionTp = useCallback((positionId: string, newTp: number) => {
+    updatePosition(positionId, { takeProfit: newTp });
+    toast.info(`TP güncellendi: ${newTp.toFixed(5)}`);
+  }, [updatePosition]);
+
   if (isLoading && visibleCandles.length === 0) {
     return (
       <div className="h-full flex items-center justify-center">
@@ -166,6 +179,8 @@ const ChartPage = () => {
             bollingerBands={enabledBollingerBands}
             emaData={enabledEmaData}
             smaData={enabledSmaData}
+            onUpdatePositionSl={handleUpdatePositionSl}
+            onUpdatePositionTp={handleUpdatePositionTp}
             pair={pair}
           />
         );
@@ -227,7 +242,29 @@ const ChartPage = () => {
 
           {/* Chart */}
           <div className="flex-1 relative">
-            {renderChart()}
+            <div
+              className="w-full h-full"
+              style={{
+                pointerEvents: isChartInteractionLocked ? 'none' : 'auto'
+              }}
+            >
+              {renderChart()}
+            </div>
+
+            {/* Floating Replay Controller */}
+            <FloatingReplayController
+              isPlaying={isPlaying}
+              speed={speed}
+              progress={progress}
+              currentIndex={currentIndex}
+              totalCandles={totalCandles}
+              onPlay={play}
+              onPause={pause}
+              onStepForward={stepForward}
+              onStepBackward={stepBackward}
+              onSeek={jumpTo}
+              onChartInteractionLock={setIsChartInteractionLocked}
+            />
           </div>
 
           {/* Indicators - Dynamic panels based on enabled indicators (only show for lightweight charts) */}

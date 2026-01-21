@@ -25,8 +25,11 @@ function normalizeTimestampToSeconds(t: number): number {
 
 function parseTimestampStringToSeconds(input: string | undefined): number {
   if (!input) return 0;
-  const s = String(input).trim();
+  let s = String(input).trim();
   if (!s) return 0;
+
+  // Handle dot-separated dates (e.g. 2017.07.26)
+  s = s.replace(/\./g, "-");
 
   // Numeric epoch (seconds or ms)
   if (/^\d+(?:\.\d+)?$/.test(s)) {
@@ -529,30 +532,35 @@ export function useMarketData() {
   }, []);
 
   // Step forward
-  const stepForward = useCallback(() => {
+  const stepForward = useCallback((steps: number = 1) => {
     if (csvCandles.length === 0) return;
 
     if (playbackState === "idle") {
-      setCurrentIndex(0);
-      setVisibleCandles([csvCandles[0]]);
+      const targetIndex = Math.min(steps - 1, csvCandles.length - 1);
+      setCurrentIndex(targetIndex);
+      setVisibleCandles(csvCandles.slice(0, targetIndex + 1));
       setPlaybackState("paused");
       setIsLive(false);
     } else {
-      addNextCandle();
+      setCurrentIndex((prev) => {
+        const nextIndex = Math.min(prev + steps, csvCandles.length - 1);
+        setVisibleCandles(csvCandles.slice(0, nextIndex + 1));
+
+        if (nextIndex >= csvCandles.length - 1) {
+          setPlaybackState("paused");
+        }
+
+        return nextIndex;
+      });
     }
-  }, [playbackState, csvCandles, addNextCandle]);
+  }, [playbackState, csvCandles]);
 
   // Step backward
-  const stepBackward = useCallback(() => {
+  const stepBackward = useCallback((steps: number = 1) => {
     if (playbackState === "idle") return;
 
     setCurrentIndex((prev) => {
-      if (prev <= 0) {
-        setVisibleCandles(csvCandles.length > 0 ? [csvCandles[0]] : []);
-        return 0;
-      }
-
-      const newIndex = prev - 1;
+      const newIndex = Math.max(0, prev - steps);
       setVisibleCandles(csvCandles.slice(0, newIndex + 1));
       setIsLive(false);
       return newIndex;

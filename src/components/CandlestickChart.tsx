@@ -4,7 +4,6 @@ import { OHLCData, Position } from '@/types/trading';
 import { DrawingLine } from '@/types/drawing';
 import { DrawingTool } from './DrawingToolbar';
 import { BollingerData, EMAData, SMAData } from '@/hooks/useIndicators';
-import { GripHorizontal } from 'lucide-react';
 
 interface CandlestickChartProps {
   data: OHLCData[];
@@ -49,14 +48,17 @@ export function CandlestickChart({
   const chartRef = useRef<IChartApi | null>(null);
   const seriesRef = useRef<ISeriesApi<'Candlestick'> | null>(null);
   const priceLinesRef = useRef<IPriceLine[]>([]);
+  const positionPriceLinesRef = useRef<Map<string, { entry?: IPriceLine; sl?: IPriceLine; tp?: IPriceLine }>>(new Map());
   const bbUpperRef = useRef<ISeriesApi<'Line'> | null>(null);
   const bbMiddleRef = useRef<ISeriesApi<'Line'> | null>(null);
   const bbLowerRef = useRef<ISeriesApi<'Line'> | null>(null);
   const emaSeriesRef = useRef<Map<number, ISeriesApi<'Line'>>>(new Map());
   const smaSeriesRef = useRef<Map<number, ISeriesApi<'Line'>>>(new Map());
   const [drawingStart, setDrawingStart] = useState<{ price: number; time: number } | null>(null);
-  const [draggingLine, setDraggingLine] = useState<{ positionId: string; type: 'sl' | 'tp'; startY: number; startPrice: number } | null>(null);
-  const [chartDimensions, setChartDimensions] = useState({ width: 0, height: 0 });
+  const [dragging, setDragging] = useState<{ positionId: string; type: 'sl' | 'tp'; startPrice: number } | null>(null);
+  const [linePositions, setLinePositions] = useState<Map<string, { sl: number | null; tp: number | null }>>(new Map());
+  const [draggedPrices, setDraggedPrices] = useState<Map<string, { sl?: number; tp?: number }>>(new Map());
+
 
   useEffect(() => {
     if (!containerRef.current) return;
@@ -172,7 +174,6 @@ export function CandlestickChart({
         const width = containerRef.current.clientWidth;
         const height = containerRef.current.clientHeight;
         chart.applyOptions({ width, height });
-        setChartDimensions({ width, height });
       }
     };
 
@@ -197,7 +198,7 @@ export function CandlestickChart({
 
       if (drawingTool === 'horizontal') {
         const drawing: DrawingLine = {
-          id: crypto.randomUUID(),
+          id: `${Date.now()}-${Math.random().toString(36).substring(2, 9)}`,
           type: 'horizontal',
           price1: price,
           time1: param.time as number,
@@ -206,7 +207,7 @@ export function CandlestickChart({
         onAddDrawing?.(drawing);
       } else if (drawingTool === 'support-resistance') {
         const drawing: DrawingLine = {
-          id: crypto.randomUUID(),
+          id: `${Date.now()}-${Math.random().toString(36).substring(2, 9)}`,
           type: data.length > 0 && price < data[data.length - 1].close ? 'support' : 'resistance',
           price1: price,
           time1: param.time as number,
@@ -218,7 +219,7 @@ export function CandlestickChart({
           setDrawingStart({ price, time: param.time as number });
         } else {
           const drawing: DrawingLine = {
-            id: crypto.randomUUID(),
+            id: `${Date.now()}-${Math.random().toString(36).substring(2, 9)}`,
             type: drawingTool === 'fibonacci' ? 'fibonacci' : 'trendline',
             price1: drawingStart.price,
             time1: drawingStart.time,
@@ -346,6 +347,26 @@ export function CandlestickChart({
     });
   }, [smaData]);
 
+  // Update line positions based on current prices
+  const updateLinePositions = useCallback(() => {
+    if (!chartRef.current || !seriesRef.current) return;
+
+    const newPositions = new Map<string, { sl: number | null; tp: number | null }>();
+
+    positions.forEach(pos => {
+      const slCoord = pos.stopLoss
+        ? seriesRef.current!.priceToCoordinate(pos.stopLoss)
+        : null;
+      const tpCoord = pos.takeProfit
+        ? seriesRef.current!.priceToCoordinate(pos.takeProfit)
+        : null;
+
+      newPositions.set(pos.id, { sl: slCoord, tp: tpCoord });
+    });
+
+    setLinePositions(newPositions);
+  }, [positions]);
+
   // Update price lines for drawings and positions
   useEffect(() => {
     if (!seriesRef.current) return;
@@ -390,8 +411,20 @@ export function CandlestickChart({
       }
     });
 
-    // Add position lines (Entry, SL, TP) - now draggable
+    // Clear old position price lines
+    positionPriceLinesRef.current.forEach((lines) => {
+      try {
+        if (lines.entry) seriesRef.current?.removePriceLine(lines.entry);
+        if (lines.sl) seriesRef.current?.removePriceLine(lines.sl);
+        if (lines.tp) seriesRef.current?.removePriceLine(lines.tp);
+      } catch (e) {}
+    });
+    positionPriceLinesRef.current.clear();
+
+    // Add position lines (Entry, SL, TP) - stored in Map for dragging
     positions.forEach(pos => {
+      const posLines: { entry?: IPriceLine; sl?: IPriceLine; tp?: IPriceLine } = {};
+
       // Entry price
       const entryLine = seriesRef.current?.createPriceLine({
         price: pos.entryPrice,
@@ -401,35 +434,49 @@ export function CandlestickChart({
         axisLabelVisible: true,
         title: `${pos.type === 'long' ? 'BUY' : 'SELL'} ${pos.size}`,
       });
-      if (entryLine) priceLinesRef.current.push(entryLine);
+      if (entryLine) {
+        priceLinesRef.current.push(entryLine);
+        posLines.entry = entryLine;
+      }
 
-      // Stop Loss - with drag label
+      // Stop Loss - draggable
       if (pos.stopLoss) {
         const slLine = seriesRef.current?.createPriceLine({
           price: pos.stopLoss,
           color: '#ff5252',
-          lineWidth: 1,
+          lineWidth: 2,
           lineStyle: LineStyle.Dashed,
           axisLabelVisible: true,
-          title: '◀ SL',
+          title: `◀ SL ${pos.stopLoss.toFixed(5)}`,
         });
-        if (slLine) priceLinesRef.current.push(slLine);
+        if (slLine) {
+          priceLinesRef.current.push(slLine);
+          posLines.sl = slLine;
+        }
       }
 
-      // Take Profit - with drag label
+      // Take Profit - draggable
       if (pos.takeProfit) {
         const tpLine = seriesRef.current?.createPriceLine({
           price: pos.takeProfit,
           color: '#00c853',
-          lineWidth: 1,
+          lineWidth: 2,
           lineStyle: LineStyle.Dashed,
           axisLabelVisible: true,
-          title: '◀ TP',
+          title: `◀ TP ${pos.takeProfit.toFixed(5)}`,
         });
-        if (tpLine) priceLinesRef.current.push(tpLine);
+        if (tpLine) {
+          priceLinesRef.current.push(tpLine);
+          posLines.tp = tpLine;
+        }
       }
+
+      positionPriceLinesRef.current.set(pos.id, posLines);
     });
-  }, [drawings, positions]);
+
+    // Update line positions for draggable handles
+    updateLinePositions();
+  }, [drawings, positions, updateLinePositions]);
 
   useEffect(() => {
     if (seriesRef.current && data.length > 0) {
@@ -440,122 +487,183 @@ export function CandlestickChart({
         low: candle.low,
         close: candle.close,
       }));
-      
+
       seriesRef.current.setData(chartData);
 
       // Keep latest candles visible (works for both live and historical playback)
       if (chartRef.current) {
-        chartRef.current.timeScale().setVisibleLogicalRange({
-          from: Math.max(0, chartData.length - 120),
-          to: chartData.length + 5,
-        });
+        const timeScale = chartRef.current.timeScale();
+        const currentRange = timeScale.getVisibleLogicalRange();
+
+        // Only auto-scroll if user is already viewing the end (last 30 candles)
+        // This prevents viewport jumping when user is viewing historical data
+        if (!currentRange || currentRange.to >= chartData.length - 30) {
+          timeScale.scrollToPosition(5, false);
+        }
       }
     }
   }, [data]);
 
-  // Handle SL/TP dragging
-  const handleMouseMove = useCallback((e: React.MouseEvent) => {
-    if (!draggingLine || !seriesRef.current || !containerRef.current) return;
-
-    const rect = containerRef.current.getBoundingClientRect();
-    const y = e.clientY - rect.top;
-    const newPrice = seriesRef.current.coordinateToPrice(y);
-    
-    if (newPrice === null) return;
-
-    const position = positions.find(p => p.id === draggingLine.positionId);
-    if (!position) return;
-
-    // Validate based on position type
-    if (draggingLine.type === 'sl') {
-      if (position.type === 'long' && newPrice < position.entryPrice) {
-        onUpdatePositionSl?.(draggingLine.positionId, newPrice);
-      } else if (position.type === 'short' && newPrice > position.entryPrice) {
-        onUpdatePositionSl?.(draggingLine.positionId, newPrice);
-      }
-    } else if (draggingLine.type === 'tp') {
-      if (position.type === 'long' && newPrice > position.entryPrice) {
-        onUpdatePositionTp?.(draggingLine.positionId, newPrice);
-      } else if (position.type === 'short' && newPrice < position.entryPrice) {
-        onUpdatePositionTp?.(draggingLine.positionId, newPrice);
-      }
-    }
-  }, [draggingLine, positions, onUpdatePositionSl, onUpdatePositionTp]);
-
-  const handleMouseUp = useCallback(() => {
-    setDraggingLine(null);
+  // Handle mouse down on drag handle
+  const handleMouseDown = useCallback((e: React.MouseEvent, positionId: string, lineType: 'sl' | 'tp', startPrice: number) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setDragging({ positionId, type: lineType, startPrice });
   }, []);
 
+  // Global mouse event listeners for dragging
   useEffect(() => {
-    if (draggingLine) {
-      document.addEventListener('mouseup', handleMouseUp);
-      return () => document.removeEventListener('mouseup', handleMouseUp);
-    }
-  }, [draggingLine, handleMouseUp]);
+    if (!dragging || !containerRef.current || !chartRef.current || !seriesRef.current) return;
+
+    let currentPrice = dragging.startPrice;
+
+    const handleGlobalMouseMove = (e: MouseEvent) => {
+      if (!containerRef.current || !chartRef.current || !seriesRef.current) return;
+
+      const rect = containerRef.current.getBoundingClientRect();
+      const y = e.clientY - rect.top;
+
+      try {
+        // Convert pixel coordinate to price
+        const newPrice = seriesRef.current.coordinateToPrice(y);
+        if (newPrice === null || newPrice === undefined) return;
+
+        currentPrice = newPrice;
+
+        const lines = positionPriceLinesRef.current.get(dragging.positionId);
+        if (!lines) return;
+
+        // Update the price line
+        if (dragging.type === 'sl' && lines.sl) {
+          seriesRef.current.removePriceLine(lines.sl);
+          const newSlLine = seriesRef.current.createPriceLine({
+            price: newPrice,
+            color: '#ff5252',
+            lineWidth: 2,
+            lineStyle: LineStyle.Dashed,
+            axisLabelVisible: true,
+            title: `◀ SL ${newPrice.toFixed(5)}`,
+          });
+          lines.sl = newSlLine;
+          positionPriceLinesRef.current.set(dragging.positionId, lines);
+
+          // Update line position for handle
+          const slCoord = seriesRef.current.priceToCoordinate(newPrice);
+          setLinePositions(prev => {
+            const newMap = new Map(prev);
+            const posLines = newMap.get(dragging.positionId) || { sl: null, tp: null };
+            newMap.set(dragging.positionId, { ...posLines, sl: slCoord });
+            return newMap;
+          });
+
+          // Store dragged price temporarily
+          setDraggedPrices(prev => {
+            const newMap = new Map(prev);
+            const posData = newMap.get(dragging.positionId) || {};
+            newMap.set(dragging.positionId, { ...posData, sl: newPrice });
+            return newMap;
+          });
+        } else if (dragging.type === 'tp' && lines.tp) {
+          seriesRef.current.removePriceLine(lines.tp);
+          const newTpLine = seriesRef.current.createPriceLine({
+            price: newPrice,
+            color: '#00c853',
+            lineWidth: 2,
+            lineStyle: LineStyle.Dashed,
+            axisLabelVisible: true,
+            title: `◀ TP ${newPrice.toFixed(5)}`,
+          });
+          lines.tp = newTpLine;
+          positionPriceLinesRef.current.set(dragging.positionId, lines);
+
+          // Update line position for handle
+          const tpCoord = seriesRef.current.priceToCoordinate(newPrice);
+          setLinePositions(prev => {
+            const newMap = new Map(prev);
+            const posLines = newMap.get(dragging.positionId) || { sl: null, tp: null };
+            newMap.set(dragging.positionId, { ...posLines, tp: tpCoord });
+            return newMap;
+          });
+
+          // Store dragged price temporarily
+          setDraggedPrices(prev => {
+            const newMap = new Map(prev);
+            const posData = newMap.get(dragging.positionId) || {};
+            newMap.set(dragging.positionId, { ...posData, tp: newPrice });
+            return newMap;
+          });
+        }
+      } catch (error) {
+        console.error('Error during drag:', error);
+      }
+    };
+
+    const handleGlobalMouseUp = () => {
+      // Save the final dragged price to position state
+      if (dragging.type === 'sl') {
+        onUpdatePositionSl?.(dragging.positionId, currentPrice);
+      } else if (dragging.type === 'tp') {
+        onUpdatePositionTp?.(dragging.positionId, currentPrice);
+      }
+      setDragging(null);
+    };
+
+    window.addEventListener('mousemove', handleGlobalMouseMove);
+    window.addEventListener('mouseup', handleGlobalMouseUp);
+
+    return () => {
+      window.removeEventListener('mousemove', handleGlobalMouseMove);
+      window.removeEventListener('mouseup', handleGlobalMouseUp);
+    };
+  }, [dragging, onUpdatePositionSl, onUpdatePositionTp]);
 
   return (
-    <div 
-      className="chart-container w-full h-full relative bg-[#050810]"
-      onMouseMove={handleMouseMove}
-    >
-      <div ref={containerRef} className="w-full h-full min-h-[400px]" />
-      
-      {/* Draggable SL/TP overlays */}
+    <div className="chart-container w-full h-full relative bg-[#050810]">
+      {/* Lightweight Charts Container */}
+      <div
+        ref={containerRef}
+        className="w-full h-full min-h-[400px]"
+      />
+
+      {/* Draggable SL/TP Handles */}
       {positions.map(pos => {
-        if (!seriesRef.current || !containerRef.current) return null;
-        
+        const posLines = linePositions.get(pos.id);
+        if (!posLines) return null;
+
         return (
           <div key={pos.id}>
-            {pos.stopLoss && (
+            {/* Stop Loss Handle */}
+            {pos.stopLoss && posLines.sl !== null && (
               <div
-                className="absolute right-20 cursor-ns-resize group"
-                style={{
-                  top: seriesRef.current.priceToCoordinate(pos.stopLoss) ?? 0,
-                }}
-                onMouseDown={(e) => {
-                  e.preventDefault();
-                  setDraggingLine({
-                    positionId: pos.id,
-                    type: 'sl',
-                    startY: e.clientY,
-                    startPrice: pos.stopLoss!,
-                  });
-                }}
+                className="absolute left-4 cursor-ns-resize z-10 select-none"
+                style={{ top: posLines.sl - 14 }}
+                onMouseDown={(e) => handleMouseDown(e, pos.id, 'sl', pos.stopLoss)}
               >
-                <div className="flex items-center gap-1 px-2 py-0.5 rounded bg-destructive/30 border border-destructive/60 text-destructive text-xs font-mono opacity-80 hover:opacity-100 transition-opacity">
-                  <GripHorizontal className="w-3 h-3" />
-                  <span>Drag SL</span>
+                <div className="px-2 py-1 rounded-md text-xs bg-red-500 text-white font-medium shadow-lg">
+                  SL: {pos.stopLoss.toFixed(5)}
                 </div>
               </div>
             )}
-            {pos.takeProfit && (
+
+            {/* Take Profit Handle */}
+            {pos.takeProfit && posLines.tp !== null && (
               <div
-                className="absolute right-20 cursor-ns-resize group"
-                style={{
-                  top: seriesRef.current.priceToCoordinate(pos.takeProfit) ?? 0,
-                }}
-                onMouseDown={(e) => {
-                  e.preventDefault();
-                  setDraggingLine({
-                    positionId: pos.id,
-                    type: 'tp',
-                    startY: e.clientY,
-                    startPrice: pos.takeProfit!,
-                  });
-                }}
+                className="absolute left-4 cursor-ns-resize z-10 select-none"
+                style={{ top: posLines.tp - 14 }}
+                onMouseDown={(e) => handleMouseDown(e, pos.id, 'tp', pos.takeProfit)}
               >
-                <div className="flex items-center gap-1 px-2 py-0.5 rounded bg-primary/30 border border-primary/60 text-primary text-xs font-mono opacity-80 hover:opacity-100 transition-opacity">
-                  <GripHorizontal className="w-3 h-3" />
-                  <span>Drag TP</span>
+                <div className="px-2 py-1 rounded-md text-xs bg-green-500 text-white font-medium shadow-lg">
+                  TP: {pos.takeProfit.toFixed(5)}
                 </div>
               </div>
             )}
           </div>
         );
       })}
-      
+
+      {/* Info overlays */}
       {drawingStart && (
-        <div className="absolute top-2 left-2 bg-card/90 px-3 py-1.5 rounded text-xs text-muted-foreground border border-border">
+        <div className="absolute top-2 left-2 bg-card/90 px-3 py-1.5 rounded text-xs text-muted-foreground border border-border pointer-events-none z-[10000]">
           İkinci noktayı seçin...
         </div>
       )}

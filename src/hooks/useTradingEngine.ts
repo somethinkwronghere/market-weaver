@@ -4,6 +4,10 @@ import { Position, Trade, TradingState, OHLCData } from '@/types/trading';
 const INITIAL_BALANCE = 10000;
 const LEVERAGE = 100;
 
+function generateId(): string {
+  return `${Date.now()}-${Math.random().toString(36).substring(2, 9)}`;
+}
+
 export function useTradingEngine() {
   const [state, setState] = useState<TradingState>({
     balance: INITIAL_BALANCE,
@@ -51,7 +55,7 @@ export function useTradingEngine() {
         totalClosedPnL += pnl;
 
         return {
-          id: crypto.randomUUID(),
+          id: generateId(),
           type: pos.type,
           entryPrice: pos.entryPrice,
           exitPrice,
@@ -145,7 +149,7 @@ export function useTradingEngine() {
         totalPnL += pnl;
 
         newTrades.push({
-          id: crypto.randomUUID(),
+          id: generateId(),
           type: position.type,
           entryPrice: position.entryPrice,
           exitPrice,
@@ -176,6 +180,17 @@ export function useTradingEngine() {
     });
   }, []);
 
+  const updatePosition = useCallback((positionId: string, updates: { stopLoss?: number; takeProfit?: number }) => {
+    setState(prev => ({
+      ...prev,
+      positions: prev.positions.map(pos =>
+        pos.id === positionId
+          ? { ...pos, ...updates }
+          : pos
+      ),
+    }));
+  }, []);
+
   return {
     state,
     updatePrice,
@@ -183,5 +198,6 @@ export function useTradingEngine() {
     closePosition,
     closeAllPositions,
     resetAccount,
+    updatePosition,
   };
 }

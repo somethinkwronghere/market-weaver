@@ -7,7 +7,7 @@ import {
 } from '@/components/ui/dropdown-menu';
 import { Button } from '@/components/ui/button';
 
-export type TradingPair = 'EUR/USD' | 'GBP/USD';
+export type TradingPair = 'EUR/USD';
 
 interface PairSelectorProps {
   activePair: TradingPair;
@@ -16,7 +16,6 @@ interface PairSelectorProps {
 
 const pairs: { value: TradingPair; label: string }[] = [
   { value: 'EUR/USD', label: 'EUR/USD' },
-  { value: 'GBP/USD', label: 'GBP/USD' },
 ];
 
 export function PairSelector({ activePair, onPairChange }: PairSelectorProps) {

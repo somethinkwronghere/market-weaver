@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback } from 'react';
+import { useEffect, useState, useCallback, useMemo } from 'react';
 import { Loader2, Radio } from 'lucide-react';
 import { Header } from '@/components/Header';
 import { CandlestickChart } from '@/components/CandlestickChart';
@@ -12,6 +12,7 @@ import { RSIPanel, MACDPanel, StochasticPanel, ATRPanel, VolumePanel } from '@/c
 import { useMarketData } from '@/hooks/useMarketData';
 import { useTradingEngine } from '@/hooks/useTradingEngine';
 import { useIndicators } from '@/hooks/useIndicators';
+import { useIndicatorsContext } from '@/contexts/IndicatorContext';
 import { DrawingLine } from '@/types/drawing';
 import { toast } from 'sonner';
 
@@ -54,9 +55,40 @@ const Index = () => {
     closePosition,
     closeAllPositions,
     resetAccount,
+    updatePosition,
   } = useTradingEngine();
 
-  const { rsi, macd, bollingerBands, stochastic, atr, volume } = useIndicators(visibleCandles);
+  const { indicators } = useIndicatorsContext();
+  const { rsi, macd, bollingerBands, stochastic, atr, volume, emaData, smaData } = useIndicators(visibleCandles);
+
+  // Filter indicators based on enabled state
+  const enabledIndicators = useMemo(() => {
+    return indicators.filter(i => i.enabled);
+  }, [indicators]);
+
+  const enabledSeparateIndicators = useMemo(() => {
+    return enabledIndicators.filter(i => i.type === 'separate');
+  }, [enabledIndicators]);
+
+  const enabledOverlayIndicators = useMemo(() => {
+    return enabledIndicators.filter(i => i.type === 'overlay');
+  }, [enabledIndicators]);
+
+  // Filter overlay indicators
+  const enabledEmaData = useMemo(() => {
+    const hasEma = enabledOverlayIndicators.some(i => i.name === 'EMA');
+    return hasEma ? emaData : [];
+  }, [emaData, enabledOverlayIndicators]);
+
+  const enabledSmaData = useMemo(() => {
+    const hasSma = enabledOverlayIndicators.some(i => i.name === 'SMA');
+    return hasSma ? smaData : [];
+  }, [smaData, enabledOverlayIndicators]);
+
+  const hasBollingerEnabled = enabledOverlayIndicators.some(
+    i => i.name.toLowerCase().includes('bollinger')
+  );
+  const enabledBollingerBands = hasBollingerEnabled ? bollingerBands : [];
 
   useEffect(() => {
     if (currentCandle) {
@@ -103,6 +135,14 @@ const Index = () => {
     resetPlayback();
     resetAccount();
     setDrawings([]);
+  };
+
+  const handleUpdatePositionSl = (positionId: string, newSl: number) => {
+    updatePosition(positionId, { stopLoss: newSl });
+  };
+
+  const handleUpdatePositionTp = (positionId: string, newTp: number) => {
+    updatePosition(positionId, { takeProfit: newTp });
   };
 
   if (isLoading && visibleCandles.length === 0) {
@@ -164,43 +204,47 @@ const Index = () => {
 
           {/* Chart */}
           <div className="flex-1 relative">
-            <CandlestickChart 
+            <CandlestickChart
               data={visibleCandles}
               currentPrice={currentCandle?.close}
               drawingTool={drawingTool}
               drawings={drawings}
               onAddDrawing={handleAddDrawing}
               positions={tradingState.positions}
-              bollingerBands={bollingerBands}
+              bollingerBands={enabledBollingerBands}
+              emaData={enabledEmaData}
+              smaData={enabledSmaData}
               pair={pair}
+              onUpdatePositionSl={handleUpdatePositionSl}
+              onUpdatePositionTp={handleUpdatePositionTp}
             />
           </div>
 
-          {/* Indicators - 5 panels grid */}
-          <div className="h-[160px] bg-[#0a0e17] border-t border-[#1a2332] grid grid-cols-5 gap-1 p-1">
-            <RSIPanel data={rsi} />
-            <MACDPanel data={macd} />
-            <StochasticPanel data={stochastic} />
-            <ATRPanel data={atr} />
-            <VolumePanel data={volume} />
-          </div>
-
-          {/* Playback Controls */}
-          <PlaybackControls
-            isPlaying={isPlaying}
-            speed={speed}
-            progress={progress}
-            currentIndex={currentIndex}
-            totalCandles={totalCandles}
-            onPlay={play}
-            onPause={pause}
-            onStepForward={stepForward}
-            onStepBackward={stepBackward}
-            onReset={handleReset}
-            onSpeedChange={setSpeed}
-            onSeek={jumpTo}
-            isLive={isLive}
-          />
+          {/* Indicators - dynamic grid based on enabled indicators */}
+          {enabledSeparateIndicators.length > 0 && (
+            <div className="h-[160px] bg-[#0a0e17] border-t border-[#1a2332] grid gap-1 p-1" style={{
+              gridTemplateColumns: `repeat(${Math.min(enabledSeparateIndicators.length, 5)}, 1fr)`
+            }}>
+              {enabledSeparateIndicators.map((indicator) => {
+                if (indicator.name === 'RSI') {
+                  return <RSIPanel key={indicator.id} data={rsi} />;
+                }
+                if (indicator.name === 'MACD') {
+                  return <MACDPanel key={indicator.id} data={macd} />;
+                }
+                if (indicator.name === 'Stochastic') {
+                  return <StochasticPanel key={indicator.id} data={stochastic} />;
+                }
+                if (indicator.name === 'ATR') {
+                  return <ATRPanel key={indicator.id} data={atr} />;
+                }
+                if (indicator.name === 'Volume') {
+                  return <VolumePanel key={indicator.id} data={volume} />;
+                }
+                return null;
+              })}
+            </div>
+          )}
         </div>
 
         {/* Right Sidebar */}
@@ -223,6 +267,23 @@ const Index = () => {
           </div>
         </div>
       </div>
+
+      {/* Floating Playback Controls */}
+      <PlaybackControls
+        isPlaying={isPlaying}
+        speed={speed}
+        progress={progress}
+        currentIndex={currentIndex}
+        totalCandles={totalCandles}
+        onPlay={play}
+        onPause={pause}
+        onStepForward={stepForward}
+        onStepBackward={stepBackward}
+        onReset={handleReset}
+        onSpeedChange={setSpeed}
+        onSeek={jumpTo}
+        isLive={isLive}
+      />
     </div>
   );
 };
