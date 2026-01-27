@@ -226,9 +226,9 @@ const ChartPage = () => {
                     {dataSource === 'polygon' ? 'CANLI • Polygon' : 'CSV • Yedek'}
                     {liveLastCandleTime
                       ? ` • son mum: ${new Date(liveLastCandleTime * 1000).toLocaleTimeString('tr-TR', {
-                          hour: '2-digit',
-                          minute: '2-digit',
-                        })}`
+                        hour: '2-digit',
+                        minute: '2-digit',
+                      })}`
                       : ''}
                   </span>
                 </div>
@@ -332,6 +332,8 @@ const ChartPage = () => {
             <AccountPanel
               state={tradingState}
               onReset={handleReset}
+              onClosePosition={handleClosePosition}
+              onCloseAll={handleCloseAll}
             />
           </div>
         </div>

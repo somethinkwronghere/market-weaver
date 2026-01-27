@@ -1,11 +1,11 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { TrendingUp, TrendingDown, X, Shield, Target, Plus, Minus } from 'lucide-react';
 import { OHLCData, Position } from '@/types/trading';
 import { cn } from '@/lib/utils';
 
 interface TradingPanelProps {
   currentCandle: OHLCData | null;
-  positions: Position[];
+
   onOpenPosition: (type: 'long' | 'short', size: number, stopLoss?: number, takeProfit?: number) => void;
   onClosePosition: (positionId: string) => void;
   onCloseAll: () => void;
@@ -14,7 +14,6 @@ interface TradingPanelProps {
 
 export function TradingPanel({
   currentCandle,
-  positions,
   onOpenPosition,
   onClosePosition,
   onCloseAll,
@@ -25,6 +24,25 @@ export function TradingPanel({
   const [tpPips, setTpPips] = useState(100);
   const [slEnabled, setSlEnabled] = useState(true);
   const [tpEnabled, setTpEnabled] = useState(true);
+
+  // New state for manual input mode
+  const [inputMode, setInputMode] = useState<'pips' | 'price'>('pips');
+  const [manualSL, setManualSL] = useState<string>('');
+  const [manualTP, setManualTP] = useState<string>('');
+  const [errorDetails, setErrorDetails] = useState<string | null>(null);
+
+  // Update manual inputs when calculated values change in pips mode
+  // This ensures that when switching to manual mode, we start with the current calculation
+  useEffect(() => {
+    if (inputMode === 'pips' && currentCandle) {
+      // We don't necessarily need to sync back to manual inputs constantly, 
+      // but it might be nice for the user to see the value they just set with the slider.
+      // However, standard behavior is usually separation or one-way sync.
+      // Let's leave manual inputs empty or independent to avoid confusion unless we want full sync.
+      // The user request implies "underneath", so maybe they want to see it?
+      // Let's keep them separate for now to avoid overwriting user entry.
+    }
+  }, [slPips, tpPips, inputMode, currentCandle]);
 
   const currentPrice = currentCandle?.close || 0;
   const priceChange = currentCandle
@@ -39,32 +57,61 @@ export function TradingPanel({
   const handleOpenPosition = (type: 'long' | 'short') => {
     let stopLoss: number | undefined;
     let takeProfit: number | undefined;
+    setErrorDetails(null);
 
-    if (slEnabled && currentPrice > 0) {
-      if (type === 'long') {
-        stopLoss = currentPrice - (slPips * pipValue);
-      } else {
-        stopLoss = currentPrice + (slPips * pipValue);
+    // Calculate TP/SL based on mode
+    if (inputMode === 'pips') {
+      if (slEnabled && currentPrice > 0) {
+        stopLoss = type === 'long'
+          ? currentPrice - (slPips * pipValue)
+          : currentPrice + (slPips * pipValue);
+      }
+      if (tpEnabled && currentPrice > 0) {
+        takeProfit = type === 'long'
+          ? currentPrice + (tpPips * pipValue)
+          : currentPrice - (tpPips * pipValue);
+      }
+    } else {
+      // Manual Mode
+      if (slEnabled && manualSL) {
+        const val = parseFloat(manualSL);
+        if (!isNaN(val)) stopLoss = val;
+      }
+      if (tpEnabled && manualTP) {
+        const val = parseFloat(manualTP);
+        if (!isNaN(val)) takeProfit = val;
       }
     }
 
-    if (tpEnabled && currentPrice > 0) {
-      if (type === 'long') {
-        takeProfit = currentPrice + (tpPips * pipValue);
-      } else {
-        takeProfit = currentPrice - (tpPips * pipValue);
+    // Validation
+    if (currentPrice > 0) {
+      if (stopLoss) {
+        if (type === 'long' && stopLoss >= currentPrice) {
+          setErrorDetails("Long için SL fiyatın altında olmalı!");
+          return;
+        }
+        if (type === 'short' && stopLoss <= currentPrice) {
+          setErrorDetails("Short için SL fiyatın üstünde olmalı!");
+          return;
+        }
+      }
+      if (takeProfit) {
+        if (type === 'long' && takeProfit <= currentPrice) {
+          setErrorDetails("Long için TP fiyatın üstünde olmalı!");
+          return;
+        }
+        if (type === 'short' && takeProfit >= currentPrice) {
+          setErrorDetails("Short için TP fiyatın altında olmalı!");
+          return;
+        }
       }
     }
 
     onOpenPosition(type, lotSize, stopLoss, takeProfit);
+    // Reset manual inputs or keep them? Keeping them is better for repeated trades.
   };
 
-  const totalPnl = positions.reduce((total, pos) => {
-    const pnl = pos.type === 'long'
-      ? (currentPrice - pos.entryPrice) * pos.size * 10000
-      : (pos.entryPrice - currentPrice) * pos.size * 10000;
-    return total + pnl;
-  }, 0);
+
 
   return (
     <div className="h-full flex flex-col bg-[#0a0e17]">
@@ -143,8 +190,8 @@ export function TradingPanel({
               onClick={() => setLotSize(size)}
               className={cn(
                 "flex-1 py-1 text-xs font-mono rounded transition-colors",
-                lotSize === size 
-                  ? "bg-blue-500 text-white" 
+                lotSize === size
+                  ? "bg-blue-500 text-white"
                   : "bg-[#1a2332] hover:bg-[#252d3d] text-muted-foreground"
               )}
             >
@@ -156,6 +203,27 @@ export function TradingPanel({
 
       {/* SL/TP Controls */}
       <div className="p-4 border-b border-[#1a2332] space-y-3">
+        {/* Mode Toggle */}
+        <div className="flex bg-[#1a2332] rounded p-1 mb-2">
+          <button
+            onClick={() => setInputMode('pips')}
+            className={cn(
+              "flex-1 text-xs py-1 rounded transition-colors font-medium",
+              inputMode === 'pips' ? "bg-blue-600 text-white" : "text-muted-foreground hover:text-white"
+            )}
+          >
+            Pips
+          </button>
+          <button
+            onClick={() => setInputMode('price')}
+            className={cn(
+              "flex-1 text-xs py-1 rounded transition-colors font-medium",
+              inputMode === 'price' ? "bg-blue-600 text-white" : "text-muted-foreground hover:text-white"
+            )}
+          >
+            Fiyat (Manuel)
+          </button>
+        </div>
         {/* Stop Loss */}
         <div className="flex items-center gap-3">
           <button
@@ -170,24 +238,41 @@ export function TradingPanel({
           <div className="flex-1">
             <div className="flex items-center justify-between mb-1">
               <span className="text-[10px] uppercase tracking-wider text-red-400">Stop Loss</span>
-              <span className="text-xs font-mono text-muted-foreground">
-                {slEnabled && currentPrice > 0 
-                  ? (currentPrice - slPips * pipValue).toFixed(5)
-                  : '—'}
-              </span>
+              {inputMode === 'pips' && (
+                <span className="text-xs font-mono text-muted-foreground">
+                  {slEnabled && currentPrice > 0
+                    ? (currentPrice - slPips * pipValue).toFixed(5)
+                    : '—'}
+                </span>
+              )}
             </div>
-            <div className="flex items-center gap-2">
-              <input
-                type="range"
-                min={10}
-                max={200}
-                value={slPips}
-                onChange={(e) => setSlPips(parseInt(e.target.value))}
-                disabled={!slEnabled}
-                className="flex-1 h-1 bg-[#1a2332] rounded-full appearance-none cursor-pointer disabled:opacity-50"
-              />
-              <span className="text-xs font-mono w-12 text-right">{slPips} pips</span>
-            </div>
+
+            {inputMode === 'pips' ? (
+              <div className="flex items-center gap-2">
+                <input
+                  type="range"
+                  min={10}
+                  max={200}
+                  value={slPips}
+                  onChange={(e) => setSlPips(parseInt(e.target.value))}
+                  disabled={!slEnabled}
+                  className="flex-1 h-1 bg-[#1a2332] rounded-full appearance-none cursor-pointer disabled:opacity-50"
+                />
+                <span className="text-xs font-mono w-12 text-right">{slPips} pips</span>
+              </div>
+            ) : (
+              <div className="flex items-center gap-2">
+                <input
+                  type="number"
+                  step="0.00001"
+                  placeholder="Örn: 1.08500"
+                  value={manualSL}
+                  onChange={(e) => setManualSL(e.target.value)}
+                  disabled={!slEnabled}
+                  className="flex-1 h-7 bg-[#0f1521] border border-[#1a2332] rounded px-2 font-mono text-sm focus:outline-none focus:border-red-500/50"
+                />
+              </div>
+            )}
           </div>
         </div>
 
@@ -205,27 +290,57 @@ export function TradingPanel({
           <div className="flex-1">
             <div className="flex items-center justify-between mb-1">
               <span className="text-[10px] uppercase tracking-wider text-green-400">Take Profit</span>
-              <span className="text-xs font-mono text-muted-foreground">
-                {tpEnabled && currentPrice > 0 
-                  ? (currentPrice + tpPips * pipValue).toFixed(5)
-                  : '—'}
-              </span>
+              {inputMode === 'pips' && (
+                <span className="text-xs font-mono text-muted-foreground">
+                  {tpEnabled && currentPrice > 0
+                    ? (currentPrice + tpPips * pipValue).toFixed(5)
+                    : '—'}
+                </span>
+              )}
             </div>
-            <div className="flex items-center gap-2">
-              <input
-                type="range"
-                min={10}
-                max={300}
-                value={tpPips}
-                onChange={(e) => setTpPips(parseInt(e.target.value))}
-                disabled={!tpEnabled}
-                className="flex-1 h-1 bg-[#1a2332] rounded-full appearance-none cursor-pointer disabled:opacity-50"
-              />
-              <span className="text-xs font-mono w-12 text-right">{tpPips} pips</span>
-            </div>
+            {inputMode === 'pips' ? (
+              <div className="flex items-center gap-2">
+                <input
+                  type="range"
+                  min={10}
+                  max={300}
+                  value={tpPips}
+                  onChange={(e) => setTpPips(parseInt(e.target.value))}
+                  disabled={!tpEnabled}
+                  className="flex-1 h-1 bg-[#1a2332] rounded-full appearance-none cursor-pointer disabled:opacity-50"
+                />
+                <span className="text-xs font-mono w-12 text-right">{tpPips} pips</span>
+              </div>
+            ) : (
+              <div className="flex items-center gap-2">
+                <input
+                  type="number"
+                  step="0.00001"
+                  placeholder="Örn: 1.09500"
+                  value={manualTP}
+                  onChange={(e) => setManualTP(e.target.value)}
+                  disabled={!tpEnabled}
+                  className="flex-1 h-7 bg-[#0f1521] border border-[#1a2332] rounded px-2 font-mono text-sm focus:outline-none focus:border-green-500/50"
+                />
+              </div>
+            )}
           </div>
         </div>
       </div>
+
+
+
+      {/* Error Message */}
+      {
+        errorDetails && (
+          <div className="px-4 py-2 bg-red-500/20 border-b border-red-500/30 animate-in fade-in slide-in-from-top-2">
+            <div className="flex items-center gap-2 text-xs text-red-200 font-medium">
+              <div className="w-1.5 h-1.5 rounded-full bg-red-500 animate-pulse" />
+              {errorDetails}
+            </div>
+          </div>
+        )
+      }
 
       {/* Buy/Sell Buttons - Enhanced - ALWAYS ENABLED */}
       <div className="p-4 grid grid-cols-2 gap-3">
@@ -259,117 +374,13 @@ export function TradingPanel({
         </button>
       </div>
 
-      {/* Open Positions - Enhanced */}
-      <div className="flex-1 overflow-auto">
-        {positions.length > 0 ? (
-          <div className="p-4 border-t border-[#1a2332]">
-            <div className="flex justify-between items-center mb-3">
-              <span className="text-[10px] uppercase tracking-wider text-muted-foreground font-semibold">
-                Açık Pozisyonlar ({positions.length})
-              </span>
-              <button
-                onClick={onCloseAll}
-                className="text-[10px] px-2 py-1 rounded bg-red-500/10 text-red-400 hover:bg-red-500/20 hover:text-red-300 transition-all uppercase tracking-wider font-semibold"
-              >
-                Hepsini Kapat
-              </button>
-            </div>
-            
-            <div className="space-y-2">
-              {positions.map((position) => {
-                const pnl = position.type === 'long'
-                  ? (currentPrice - position.entryPrice) * position.size * 10000
-                  : (position.entryPrice - currentPrice) * position.size * 10000;
-                
-                return (
-                  <div
-                    key={position.id}
-                    className={cn(
-                      "p-3 rounded-lg border-2 transition-all duration-200",
-                      pnl >= 0
-                        ? "bg-green-500/5 border-green-500/30 hover:border-green-500/50"
-                        : "bg-red-500/5 border-red-500/30 hover:border-red-500/50"
-                    )}
-                  >
-                    <div className="flex items-center justify-between mb-2">
-                      <div className="flex items-center gap-2">
-                        <span className={cn(
-                          "text-[10px] font-bold px-2 py-1 rounded-md",
-                          position.type === 'long'
-                            ? "bg-green-500/30 text-green-300 border border-green-500/50"
-                            : "bg-red-500/30 text-red-300 border border-red-500/50"
-                        )}>
-                          {position.type.toUpperCase()}
-                        </span>
-                        <span className="font-mono text-xs font-semibold">{position.size} lot</span>
-                      </div>
-                      <button
-                        onClick={() => onClosePosition(position.id)}
-                        className="p-1.5 hover:bg-red-500/30 rounded-md transition-all hover:scale-110"
-                      >
-                        <X className="w-3.5 h-3.5 text-red-400 hover:text-red-300" />
-                      </button>
-                    </div>
-
-                    <div className="flex items-center justify-between text-xs mb-2">
-                      <span className="font-mono text-muted-foreground">
-                        Giriş: {position.entryPrice.toFixed(5)}
-                      </span>
-                      <span className={cn(
-                        "font-mono font-bold text-base px-2 py-0.5 rounded",
-                        pnl >= 0 ? "text-green-400 bg-green-500/10" : "text-red-400 bg-red-500/10"
-                      )}>
-                        {pnl >= 0 ? '+' : ''}{pnl.toFixed(2)}
-                      </span>
-                    </div>
-                    
-                    {(position.stopLoss || position.takeProfit) && (
-                      <div className="flex gap-3 mt-2 pt-2 border-t border-[#1a2332] text-[10px]">
-                        {position.stopLoss && (
-                          <span className="text-red-400">
-                            SL: {position.stopLoss.toFixed(5)}
-                          </span>
-                        )}
-                        {position.takeProfit && (
-                          <span className="text-green-400">
-                            TP: {position.takeProfit.toFixed(5)}
-                          </span>
-                        )}
-                      </div>
-                    )}
-                  </div>
-                );
-              })}
-            </div>
-
-            {/* Total P&L - Enhanced */}
-            <div className={cn(
-              "mt-3 p-4 rounded-lg border-2 transition-all duration-200",
-              totalPnl >= 0
-                ? "bg-green-500/10 border-green-500/50"
-                : "bg-red-500/10 border-red-500/50"
-            )}>
-              <div className="flex items-center justify-between">
-                <span className="text-xs uppercase tracking-wider font-bold text-muted-foreground">Toplam K/Z</span>
-                <span className={cn(
-                  "font-mono font-bold text-xl",
-                  totalPnl >= 0 ? "text-green-400" : "text-red-400"
-                )}>
-                  {totalPnl >= 0 ? '+' : ''}{totalPnl.toFixed(2)}
-                </span>
-              </div>
-            </div>
-          </div>
-        ) : (
-          <div className="flex items-center justify-center h-32 text-muted-foreground text-sm">
-            <div className="text-center">
-              <div className="text-3xl mb-2">📊</div>
-              <p>Henüz açık pozisyon yok</p>
-              <p className="text-xs mt-1">Long veya Short açın</p>
-            </div>
-          </div>
-        )}
+      {/* Open Positions - Moved to AccountPanel */}
+      <div className="flex-1 bg-[#0a0e17] flex items-center justify-center text-muted-foreground/20">
+        <div className="text-center">
+          <TrendingUp className="w-12 h-12 mx-auto mb-2 opacity-20" />
+          <div className="text-[10px] font-mono">REPLEX</div>
+        </div>
       </div>
-    </div>
+    </div >
   );
 }

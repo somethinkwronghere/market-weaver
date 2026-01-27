@@ -115,9 +115,9 @@ const Index = () => {
     setDrawings([]);
   }, []);
 
-  const handleOpenPosition = (type: 'long' | 'short', size: number, stopLoss?: number, takeProfit?: number) => {
+  const handleOpenPosition = (type: 'long' | 'short', size: number, stopLoss?: number, takeProfit?: number, useOverlay?: boolean) => {
     if (!currentCandle) return;
-    openPosition(type, size, currentCandle, stopLoss, takeProfit);
+    openPosition(type, size, currentCandle, stopLoss, takeProfit, useOverlay);
     toast.success(`${type.toUpperCase()} @ ${currentCandle.close.toFixed(5)}`);
   };
 
@@ -159,7 +159,7 @@ const Index = () => {
   return (
     <div className="h-screen flex flex-col bg-[#050810] overflow-hidden">
       <Header />
-      
+
       <div className="flex-1 flex overflow-hidden">
         {/* Main Chart Area */}
         <div className="flex-1 flex flex-col">
@@ -170,7 +170,7 @@ const Index = () => {
                 activePair={pair}
                 onPairChange={handlePairChange}
               />
-              <DrawingToolbar 
+              <DrawingToolbar
                 activeTool={drawingTool}
                 onToolChange={setDrawingTool}
                 onClearDrawings={handleClearDrawings}
@@ -188,9 +188,9 @@ const Index = () => {
                     {dataSource === 'polygon' ? 'CANLI • Polygon' : 'CSV • Yedek'}
                     {liveLastCandleTime
                       ? ` • son mum: ${new Date(liveLastCandleTime * 1000).toLocaleTimeString('tr-TR', {
-                          hour: '2-digit',
-                          minute: '2-digit',
-                        })}`
+                        hour: '2-digit',
+                        minute: '2-digit',
+                      })}`
                       : ''}
                   </span>
                 </div>
@@ -217,6 +217,7 @@ const Index = () => {
               pair={pair}
               onUpdatePositionSl={handleUpdatePositionSl}
               onUpdatePositionTp={handleUpdatePositionTp}
+              onOpenPosition={handleOpenPosition}
             />
           </div>
 

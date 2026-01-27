@@ -4,6 +4,7 @@ import { OHLCData, Position } from '@/types/trading';
 import { DrawingLine } from '@/types/drawing';
 import { DrawingTool } from './DrawingToolbar';
 import { BollingerData, EMAData, SMAData } from '@/hooks/useIndicators';
+import { PositionPrimitive, PositionToolData } from './PositionPrimitive';
 
 interface CandlestickChartProps {
   data: OHLCData[];
@@ -17,6 +18,7 @@ interface CandlestickChartProps {
   smaData?: SMAData[];
   onUpdatePositionSl?: (positionId: string, newSl: number) => void;
   onUpdatePositionTp?: (positionId: string, newTp: number) => void;
+  onOpenPosition?: (type: 'long' | 'short', size: number, stopLoss?: number, takeProfit?: number, useOverlay?: boolean) => void;
   pair?: string;
 }
 
@@ -41,6 +43,7 @@ export function CandlestickChart({
   smaData = [],
   onUpdatePositionSl,
   onUpdatePositionTp,
+  onOpenPosition,
   pair,
 }: CandlestickChartProps) {
   const priceFormat = getPriceFormat(pair);
@@ -54,10 +57,13 @@ export function CandlestickChart({
   const bbLowerRef = useRef<ISeriesApi<'Line'> | null>(null);
   const emaSeriesRef = useRef<Map<number, ISeriesApi<'Line'>>>(new Map());
   const smaSeriesRef = useRef<Map<number, ISeriesApi<'Line'>>>(new Map());
+  const positionPrimitivesRef = useRef<Map<string, PositionPrimitive>>(new Map());
   const [drawingStart, setDrawingStart] = useState<{ price: number; time: number } | null>(null);
   const [dragging, setDragging] = useState<{ positionId: string; type: 'sl' | 'tp'; startPrice: number } | null>(null);
   const [linePositions, setLinePositions] = useState<Map<string, { sl: number | null; tp: number | null }>>(new Map());
   const [draggedPrices, setDraggedPrices] = useState<Map<string, { sl?: number; tp?: number }>>(new Map());
+  const [positionDrawings, setPositionDrawings] = useState<PositionToolData[]>([]);
+  const [drawingDrag, setDrawingDrag] = useState<{ id: string; type: 'sl' | 'tp' | 'resize' | 'entry'; startPrice: number; startX: number; initialSnapshot?: PositionToolData } | null>(null);
 
 
   useEffect(() => {
@@ -106,8 +112,8 @@ export function CandlestickChart({
         barSpacing: 8,
         tickMarkFormatter: (time: number) => {
           const date = new Date(time * 1000);
-          return date.toLocaleDateString('tr-TR', { day: 'numeric', month: 'short' }) + ' ' + 
-                 date.toLocaleTimeString('tr-TR', { hour: '2-digit', minute: '2-digit' });
+          return date.toLocaleDateString('tr-TR', { day: 'numeric', month: 'short' }) + ' ' +
+            date.toLocaleTimeString('tr-TR', { hour: '2-digit', minute: '2-digit' });
         },
       },
       handleScale: {
@@ -145,7 +151,7 @@ export function CandlestickChart({
       lastValueVisible: false,
       crosshairMarkerVisible: false,
     });
-    
+
     const bbMiddle = chart.addLineSeries({
       color: '#3b82f680',
       lineWidth: 1,
@@ -154,7 +160,7 @@ export function CandlestickChart({
       lastValueVisible: false,
       crosshairMarkerVisible: false,
     });
-    
+
     const bbLower = chart.addLineSeries({
       color: '#3b82f640',
       lineWidth: 1,
@@ -186,13 +192,140 @@ export function CandlestickChart({
     };
   }, [pair, priceFormat.precision, priceFormat.minMove]);
 
+
+  // Sync primitives with positionDrawings state AND active positions
+  useEffect(() => {
+    if (!seriesRef.current) return;
+
+    // 1. Manage Drawing Primitives
+    const currentDrawingIds = new Set(positionDrawings.map(d => d.id));
+
+    // Remove detached primitives
+    positionPrimitivesRef.current.forEach((primitive, id) => {
+      // Only manage drawing primitives here
+      if (id.startsWith('pos-') && !currentDrawingIds.has(id)) {
+        try { seriesRef.current?.detachPrimitive(primitive); } catch (e) { }
+        positionPrimitivesRef.current.delete(id);
+      }
+      // If any non-drawing primitive exists in this ref, remove it (cleanup old state)
+      if (!id.startsWith('pos-')) {
+        try { seriesRef.current?.detachPrimitive(primitive); } catch (e) { }
+        positionPrimitivesRef.current.delete(id);
+      }
+    });
+
+    // Render Drawings
+    positionDrawings.forEach(drawing => {
+      let primitive = positionPrimitivesRef.current.get(drawing.id);
+      if (!primitive && seriesRef.current) {
+        primitive = new PositionPrimitive();
+        seriesRef.current.attachPrimitive(primitive);
+        positionPrimitivesRef.current.set(drawing.id, primitive);
+      }
+      primitive?.setData(drawing);
+    });
+
+  }, [positionDrawings]);
+
+  // Render Real Positions as Standard PriceLines
+  // Render Real Positions (Hybrid: PriceLines or Overlay)
+  useEffect(() => {
+    if (!seriesRef.current) return;
+
+    // 1. Clean up ALL PriceLines first
+    positionPriceLinesRef.current.forEach(lines => {
+      if (lines.entry) seriesRef.current?.removePriceLine(lines.entry);
+      if (lines.sl) seriesRef.current?.removePriceLine(lines.sl);
+      if (lines.tp) seriesRef.current?.removePriceLine(lines.tp);
+    });
+    positionPriceLinesRef.current.clear();
+
+    const activePrimitiveIds = new Set<string>();
+
+    positions.forEach(pos => {
+      if (pos.useOverlay) {
+        // Render as Overlay (Primitive)
+        let primitive = positionPrimitivesRef.current.get(pos.id);
+        if (!primitive && seriesRef.current) {
+          primitive = new PositionPrimitive();
+          seriesRef.current.attachPrimitive(primitive);
+          positionPrimitivesRef.current.set(pos.id, primitive);
+        }
+
+        primitive?.setData({
+          id: pos.id,
+          type: pos.type,
+          entryPrice: pos.entryPrice,
+          stopLoss: pos.stopLoss,
+          takeProfit: pos.takeProfit,
+          size: pos.size,
+          showRiskReward: true,
+          startTime: pos.entryTime,
+          candleCount: 50,
+        });
+        activePrimitiveIds.add(pos.id);
+
+      } else {
+        // Render as PriceLines
+        const lines: { entry?: IPriceLine; sl?: IPriceLine; tp?: IPriceLine } = {};
+
+        // Entry Line
+        lines.entry = seriesRef.current?.createPriceLine({
+          price: pos.entryPrice,
+          color: pos.type === 'long' ? '#00c853' : '#ff5252',
+          lineWidth: 1,
+          lineStyle: LineStyle.Solid,
+          axisLabelVisible: true,
+          title: `Entry ${pos.entryPrice.toFixed(5)}`,
+        });
+
+        // SL Line
+        if (pos.stopLoss) {
+          lines.sl = seriesRef.current?.createPriceLine({
+            price: pos.stopLoss,
+            color: '#ff5252',
+            lineWidth: 1,
+            lineStyle: LineStyle.Dashed,
+            axisLabelVisible: true,
+            title: `SL ${pos.stopLoss.toFixed(5)}`,
+          });
+        }
+
+        // TP Line
+        if (pos.takeProfit) {
+          lines.tp = seriesRef.current?.createPriceLine({
+            price: pos.takeProfit,
+            color: '#00c853',
+            lineWidth: 1,
+            lineStyle: LineStyle.Dashed,
+            axisLabelVisible: true,
+            title: `TP ${pos.takeProfit.toFixed(5)}`,
+          });
+        }
+
+        positionPriceLinesRef.current.set(pos.id, lines);
+      }
+    });
+
+    // Clean up detached primitives for real positions (those without useOverlay or closed)
+    // IMPORTANT: Only clean up non-drawing primitives (IDs not starting with pos-)
+    positionPrimitivesRef.current.forEach((prim, id) => {
+      if (!id.startsWith('pos-') && !activePrimitiveIds.has(id)) {
+        try { seriesRef.current?.detachPrimitive(prim); } catch (e) { }
+        positionPrimitivesRef.current.delete(id);
+      }
+    });
+
+  }, [positions]);
+
+
   // Handle drawing tool clicks
   useEffect(() => {
     if (!chartRef.current || !seriesRef.current || drawingTool === 'select') return;
 
     const handleClick = (param: any) => {
       if (!param.point || !param.time) return;
-      
+
       const price = seriesRef.current?.coordinateToPrice(param.point.y);
       if (price === null || price === undefined) return;
 
@@ -231,8 +364,21 @@ export function CandlestickChart({
           onAddDrawing?.(drawing);
           setDrawingStart(null);
         }
+      } else if (drawingTool === 'long-position' || drawingTool === 'short-position') {
+        const isLong = drawingTool === 'long-position';
+
+        // Default SL/TP: 0.5% risk, 1% reward
+        const riskPercent = 0.005;
+        const dist = price * riskPercent;
+
+        const stopLoss = isLong ? price - dist : price + dist;
+        const takeProfit = isLong ? price + (dist * 2) : price - (dist * 2);
+
+        // Open Real Position immediately with Overlay Visuals
+        onOpenPosition?.(isLong ? 'long' : 'short', 0.1, stopLoss, takeProfit, true);
       }
     };
+
 
     chartRef.current.subscribeClick(handleClick);
 
@@ -269,7 +415,7 @@ export function CandlestickChart({
       if (!currentPeriods.has(period)) {
         try {
           chartRef.current?.removeSeries(series);
-        } catch (e) {}
+        } catch (e) { }
         emaSeriesRef.current.delete(period);
       }
     });
@@ -317,7 +463,7 @@ export function CandlestickChart({
       if (!currentPeriods.has(period)) {
         try {
           chartRef.current?.removeSeries(series);
-        } catch (e) {}
+        } catch (e) { }
         smaSeriesRef.current.delete(period);
       }
     });
@@ -375,7 +521,7 @@ export function CandlestickChart({
     priceLinesRef.current.forEach(line => {
       try {
         seriesRef.current?.removePriceLine(line);
-      } catch (e) {}
+      } catch (e) { }
     });
     priceLinesRef.current = [];
 
@@ -395,7 +541,7 @@ export function CandlestickChart({
         const high = Math.max(drawing.price1, drawing.price2);
         const low = Math.min(drawing.price1, drawing.price2);
         const diff = high - low;
-        
+
         drawing.fibLevels?.forEach(level => {
           const price = high - (diff * level);
           const priceLine = seriesRef.current?.createPriceLine({
@@ -411,68 +557,9 @@ export function CandlestickChart({
       }
     });
 
-    // Clear old position price lines
-    positionPriceLinesRef.current.forEach((lines) => {
-      try {
-        if (lines.entry) seriesRef.current?.removePriceLine(lines.entry);
-        if (lines.sl) seriesRef.current?.removePriceLine(lines.sl);
-        if (lines.tp) seriesRef.current?.removePriceLine(lines.tp);
-      } catch (e) {}
-    });
-    positionPriceLinesRef.current.clear();
 
-    // Add position lines (Entry, SL, TP) - stored in Map for dragging
-    positions.forEach(pos => {
-      const posLines: { entry?: IPriceLine; sl?: IPriceLine; tp?: IPriceLine } = {};
-
-      // Entry price
-      const entryLine = seriesRef.current?.createPriceLine({
-        price: pos.entryPrice,
-        color: pos.type === 'long' ? '#00c853' : '#ff5252',
-        lineWidth: 2,
-        lineStyle: LineStyle.Solid,
-        axisLabelVisible: true,
-        title: `${pos.type === 'long' ? 'BUY' : 'SELL'} ${pos.size}`,
-      });
-      if (entryLine) {
-        priceLinesRef.current.push(entryLine);
-        posLines.entry = entryLine;
-      }
-
-      // Stop Loss - draggable
-      if (pos.stopLoss) {
-        const slLine = seriesRef.current?.createPriceLine({
-          price: pos.stopLoss,
-          color: '#ff5252',
-          lineWidth: 2,
-          lineStyle: LineStyle.Dashed,
-          axisLabelVisible: true,
-          title: `◀ SL ${pos.stopLoss.toFixed(5)}`,
-        });
-        if (slLine) {
-          priceLinesRef.current.push(slLine);
-          posLines.sl = slLine;
-        }
-      }
-
-      // Take Profit - draggable
-      if (pos.takeProfit) {
-        const tpLine = seriesRef.current?.createPriceLine({
-          price: pos.takeProfit,
-          color: '#00c853',
-          lineWidth: 2,
-          lineStyle: LineStyle.Dashed,
-          axisLabelVisible: true,
-          title: `◀ TP ${pos.takeProfit.toFixed(5)}`,
-        });
-        if (tpLine) {
-          priceLinesRef.current.push(tpLine);
-          posLines.tp = tpLine;
-        }
-      }
-
-      positionPriceLinesRef.current.set(pos.id, posLines);
-    });
+    // Note: Position primitives for the drawing tool are managed separately via click handlers
+    // Trading positions (from TradingPanel) now just use the drag handles overlay
 
     // Update line positions for draggable handles
     updateLinePositions();
@@ -490,122 +577,192 @@ export function CandlestickChart({
 
       seriesRef.current.setData(chartData);
 
-      // Keep latest candles visible (works for both live and historical playback)
+      // Auto-scroll only on initial load, not on every data update
+      // User can manually scroll and it won't jump back
       if (chartRef.current) {
         const timeScale = chartRef.current.timeScale();
         const currentRange = timeScale.getVisibleLogicalRange();
 
-        // Only auto-scroll if user is already viewing the end (last 30 candles)
-        // This prevents viewport jumping when user is viewing historical data
-        if (!currentRange || currentRange.to >= chartData.length - 30) {
+        // Only auto-scroll if no range is set (initial load) or user is at the very end
+        if (!currentRange) {
           timeScale.scrollToPosition(5, false);
         }
       }
     }
   }, [data]);
 
-  // Handle mouse down on drag handle
-  const handleMouseDown = useCallback((e: React.MouseEvent, positionId: string, lineType: 'sl' | 'tp', startPrice: number) => {
+  // Unified Mouse Drag Handler for Trading Positions AND Position Drawings
+  // Unified Mouse Drag Handler for Trading Positions AND Position Drawings
+  const handleMouseDown = useCallback((e: React.MouseEvent, id: string, type: 'sl' | 'tp' | 'resize' | 'entry', startPrice: number) => {
     e.preventDefault();
     e.stopPropagation();
-    setDragging({ positionId, type: lineType, startPrice });
-  }, []);
 
-  // Global mouse event listeners for dragging
+    // Check if it's a position drawing
+    if (id.startsWith('pos-')) {
+      const drawing = positionDrawings.find(d => d.id === id);
+      setDrawingDrag({
+        id,
+        type,
+        startPrice,
+        startX: e.clientX,
+        initialSnapshot: drawing ? { ...drawing } : undefined
+      });
+    } else {
+      // Legacy trading position drag
+      setDragging({ positionId: id, type: type as 'sl' | 'tp', startPrice });
+    }
+  }, [positionDrawings]);
+
+  // Global drag listener
   useEffect(() => {
-    if (!dragging || !containerRef.current || !chartRef.current || !seriesRef.current) return;
+    if ((!dragging && !drawingDrag) || !containerRef.current || !chartRef.current || !seriesRef.current) return;
 
-    let currentPrice = dragging.startPrice;
+    let currentPrice = dragging?.startPrice ?? drawingDrag?.startPrice ?? 0;
+
+    // For resizing, we need to track mouse X movement
+    const startX = drawingDrag?.startX ?? 0;
 
     const handleGlobalMouseMove = (e: MouseEvent) => {
       if (!containerRef.current || !chartRef.current || !seriesRef.current) return;
 
-      const rect = containerRef.current.getBoundingClientRect();
-      const y = e.clientY - rect.top;
-
       try {
-        // Convert pixel coordinate to price
+        const rect = containerRef.current.getBoundingClientRect();
+        const y = e.clientY - rect.top;
         const newPrice = seriesRef.current.coordinateToPrice(y);
-        if (newPrice === null || newPrice === undefined) return;
 
-        currentPrice = newPrice;
+        if (dragging) {
+          if (newPrice !== null && newPrice !== undefined) {
+            currentPrice = newPrice;
 
-        const lines = positionPriceLinesRef.current.get(dragging.positionId);
-        if (!lines) return;
+            const originalPos = positions.find(p => p.id === dragging.positionId);
 
-        // Update the price line
-        if (dragging.type === 'sl' && lines.sl) {
-          seriesRef.current.removePriceLine(lines.sl);
-          const newSlLine = seriesRef.current.createPriceLine({
-            price: newPrice,
-            color: '#ff5252',
-            lineWidth: 2,
-            lineStyle: LineStyle.Dashed,
-            axisLabelVisible: true,
-            title: `◀ SL ${newPrice.toFixed(5)}`,
-          });
-          lines.sl = newSlLine;
-          positionPriceLinesRef.current.set(dragging.positionId, lines);
+            // Check if using overlay (Hybrid Mode)
+            if (originalPos?.useOverlay) {
+              // Overlay Drag Logic (Primitive)
+              const primitive = positionPrimitivesRef.current.get(dragging.positionId);
+              if (primitive) {
+                const newData: PositionToolData = {
+                  id: originalPos.id,
+                  type: originalPos.type,
+                  entryPrice: originalPos.entryPrice,
+                  stopLoss: dragging.type === 'sl' ? newPrice : originalPos.stopLoss,
+                  takeProfit: dragging.type === 'tp' ? newPrice : originalPos.takeProfit,
+                  size: originalPos.size,
+                  showRiskReward: true,
+                  startTime: originalPos.entryTime,
+                  candleCount: 50,
+                };
+                primitive.setData(newData);
+              }
+            } else {
+              // Standard Drag Logic (PriceLine)
+              const lines = positionPriceLinesRef.current.get(dragging.positionId);
+              if (lines) {
+                if (dragging.type === 'sl' && lines.sl) {
+                  seriesRef.current.removePriceLine(lines.sl);
+                  lines.sl = seriesRef.current.createPriceLine({
+                    price: newPrice,
+                    color: '#ff5252',
+                    lineWidth: 1,
+                    lineStyle: LineStyle.Dashed,
+                    axisLabelVisible: true,
+                    title: `SL ${newPrice.toFixed(5)}`,
+                  });
 
-          // Update line position for handle
-          const slCoord = seriesRef.current.priceToCoordinate(newPrice);
-          setLinePositions(prev => {
-            const newMap = new Map(prev);
-            const posLines = newMap.get(dragging.positionId) || { sl: null, tp: null };
-            newMap.set(dragging.positionId, { ...posLines, sl: slCoord });
-            return newMap;
-          });
+                  const coord = seriesRef.current.priceToCoordinate(newPrice);
+                  if (coord !== null) {
+                    setLinePositions(prev => {
+                      const next = new Map(prev);
+                      const current = next.get(dragging.positionId) || { sl: null, tp: null };
+                      next.set(dragging.positionId, { ...current, sl: coord });
+                      return next;
+                    });
+                  }
+                } else if (dragging.type === 'tp' && lines.tp) {
+                  seriesRef.current.removePriceLine(lines.tp);
+                  lines.tp = seriesRef.current.createPriceLine({
+                    price: newPrice,
+                    color: '#00c853',
+                    lineWidth: 1,
+                    lineStyle: LineStyle.Dashed,
+                    axisLabelVisible: true,
+                    title: `TP ${newPrice.toFixed(5)}`,
+                  });
 
-          // Store dragged price temporarily
-          setDraggedPrices(prev => {
-            const newMap = new Map(prev);
-            const posData = newMap.get(dragging.positionId) || {};
-            newMap.set(dragging.positionId, { ...posData, sl: newPrice });
-            return newMap;
-          });
-        } else if (dragging.type === 'tp' && lines.tp) {
-          seriesRef.current.removePriceLine(lines.tp);
-          const newTpLine = seriesRef.current.createPriceLine({
-            price: newPrice,
-            color: '#00c853',
-            lineWidth: 2,
-            lineStyle: LineStyle.Dashed,
-            axisLabelVisible: true,
-            title: `◀ TP ${newPrice.toFixed(5)}`,
-          });
-          lines.tp = newTpLine;
-          positionPriceLinesRef.current.set(dragging.positionId, lines);
+                  const coord = seriesRef.current.priceToCoordinate(newPrice);
+                  if (coord !== null) {
+                    setLinePositions(prev => {
+                      const next = new Map(prev);
+                      const current = next.get(dragging.positionId) || { sl: null, tp: null };
+                      next.set(dragging.positionId, { ...current, tp: coord });
+                      return next;
+                    });
+                  }
+                }
+                positionPriceLinesRef.current.set(dragging.positionId, lines);
+              }
+            }
+          }
 
-          // Update line position for handle
-          const tpCoord = seriesRef.current.priceToCoordinate(newPrice);
-          setLinePositions(prev => {
-            const newMap = new Map(prev);
-            const posLines = newMap.get(dragging.positionId) || { sl: null, tp: null };
-            newMap.set(dragging.positionId, { ...posLines, tp: tpCoord });
-            return newMap;
-          });
+        } else if (drawingDrag && drawingDrag.initialSnapshot) {
+          if (drawingDrag.type === 'resize') {
+            // Horizontal drag for resizing duration
+            const deltaPixels = e.clientX - startX;
+            const sensitivity = 10;
+            const deltaCandles = Math.round(deltaPixels / sensitivity);
 
-          // Store dragged price temporarily
-          setDraggedPrices(prev => {
-            const newMap = new Map(prev);
-            const posData = newMap.get(dragging.positionId) || {};
-            newMap.set(dragging.positionId, { ...posData, tp: newPrice });
-            return newMap;
-          });
+            const newCount = Math.max(2, drawingDrag.initialSnapshot.candleCount + deltaCandles);
+
+            setPositionDrawings(prev => prev.map(d => {
+              if (d.id === drawingDrag.id) {
+                return { ...d, candleCount: newCount };
+              }
+              return d;
+            }));
+          } else if (drawingDrag.type === 'entry' && newPrice !== null) {
+            // Move entire position (Entry + SL + TP)
+            const priceDelta = newPrice - drawingDrag.startPrice;
+
+            setPositionDrawings(prev => prev.map(d => {
+              if (d.id === drawingDrag.id) {
+                const snap = drawingDrag.initialSnapshot!;
+                return {
+                  ...d,
+                  entryPrice: snap.entryPrice + priceDelta,
+                  stopLoss: snap.stopLoss ? snap.stopLoss + priceDelta : null,
+                  takeProfit: snap.takeProfit ? snap.takeProfit + priceDelta : null,
+                };
+              }
+              return d;
+            }));
+          } else {
+            // Vertical drag for SL/TP
+            if (newPrice !== null && newPrice !== undefined) {
+              currentPrice = newPrice;
+              setPositionDrawings(prev => prev.map(d => {
+                if (d.id === drawingDrag.id) {
+                  if (drawingDrag.type === 'sl') return { ...d, stopLoss: newPrice };
+                  if (drawingDrag.type === 'tp') return { ...d, takeProfit: newPrice };
+                }
+                return d;
+              }));
+            }
+          }
         }
-      } catch (error) {
-        console.error('Error during drag:', error);
-      }
+
+      } catch (error) { console.error(error); }
     };
 
     const handleGlobalMouseUp = () => {
-      // Save the final dragged price to position state
-      if (dragging.type === 'sl') {
-        onUpdatePositionSl?.(dragging.positionId, currentPrice);
-      } else if (dragging.type === 'tp') {
-        onUpdatePositionTp?.(dragging.positionId, currentPrice);
+      if (dragging) {
+        // Finalize trading position update
+        if (dragging.type === 'sl') onUpdatePositionSl?.(dragging.positionId, currentPrice);
+        if (dragging.type === 'tp') onUpdatePositionTp?.(dragging.positionId, currentPrice);
+        setDragging(null);
       }
-      setDragging(null);
+      if (drawingDrag) {
+        setDrawingDrag(null);
+      }
     };
 
     window.addEventListener('mousemove', handleGlobalMouseMove);
@@ -615,7 +772,7 @@ export function CandlestickChart({
       window.removeEventListener('mousemove', handleGlobalMouseMove);
       window.removeEventListener('mouseup', handleGlobalMouseUp);
     };
-  }, [dragging, onUpdatePositionSl, onUpdatePositionTp]);
+  }, [dragging, drawingDrag, onUpdatePositionSl, onUpdatePositionTp]);
 
   return (
     <div className="chart-container w-full h-full relative bg-[#050810]">
@@ -655,6 +812,80 @@ export function CandlestickChart({
                 <div className="px-2 py-1 rounded-md text-xs bg-green-500 text-white font-medium shadow-lg">
                   TP: {pos.takeProfit.toFixed(5)}
                 </div>
+              </div>
+            )}
+          </div>
+        );
+      })}
+
+      {/* Position Drawing Handles */}
+      {positionDrawings.map(drawing => {
+        if (!seriesRef.current || !chartRef.current) return null;
+
+        const slY = drawing.stopLoss ? seriesRef.current.priceToCoordinate(drawing.stopLoss) : null;
+        const tpY = drawing.takeProfit ? seriesRef.current.priceToCoordinate(drawing.takeProfit) : null;
+        const entryY = seriesRef.current.priceToCoordinate(drawing.entryPrice);
+
+        // Calculate X for resize handle (end of position)
+        // We need the end time
+        const candleInSeconds = 3600; // approximation if timeframe unknown
+        const endTime = drawing.startTime + (drawing.candleCount * candleInSeconds);
+        const endX = chartRef.current.timeScale().timeToCoordinate(endTime as Time);
+
+        return (
+          <div key={drawing.id}>
+            {/* SL Handle */}
+            {slY !== null && (
+              <div
+                className="absolute right-12 cursor-ns-resize z-20 select-none group"
+                style={{ top: slY - 10 }}
+                onMouseDown={(e) => handleMouseDown(e, drawing.id, 'sl', drawing.stopLoss!)}
+              >
+                <div className="bg-red-500/80 hover:bg-red-500 text-white text-[10px] px-1.5 py-0.5 rounded shadow-sm border border-red-400 backdrop-blur-sm transition-colors">
+                  SL
+                </div>
+              </div>
+            )}
+
+            {/* TP Handle */}
+            {tpY !== null && (
+              <div
+                className="absolute right-12 cursor-ns-resize z-20 select-none group"
+                style={{ top: tpY - 10 }}
+                onMouseDown={(e) => handleMouseDown(e, drawing.id, 'tp', drawing.takeProfit!)}
+              >
+                <div className="bg-green-500/80 hover:bg-green-500 text-white text-[10px] px-1.5 py-0.5 rounded shadow-sm border border-green-400 backdrop-blur-sm transition-colors">
+                  TP
+                </div>
+              </div>
+            )}
+
+            {/* Entry Handle (Move Whole Position) */}
+            {entryY !== null && (
+              <div
+                className="absolute right-12 cursor-move z-30 select-none group"
+                style={{ top: entryY - 10 }}
+                onMouseDown={(e) => handleMouseDown(e, drawing.id, 'entry', drawing.entryPrice)}
+              >
+                <div className="bg-blue-500/80 hover:bg-blue-500 text-white text-[10px] px-1.5 py-0.5 rounded shadow-sm border border-blue-400 backdrop-blur-sm transition-colors">
+                  Entry
+                </div>
+              </div>
+            )}
+
+            {/* Resize Handle (Right Edge) */}
+            {endX !== null && entryY !== null && (
+              <div
+                className="absolute z-20 cursor-ew-resize group"
+                style={{
+                  left: endX - 4,
+                  top: Math.min(entryY, slY ?? entryY, tpY ?? entryY),
+                  height: Math.abs((Math.max(entryY, slY ?? entryY, tpY ?? entryY)) - (Math.min(entryY, slY ?? entryY, tpY ?? entryY))),
+                  width: 10
+                }}
+                onMouseDown={(e) => handleMouseDown(e, drawing.id, 'resize', 0)}
+              >
+                <div className="w-1 h-full mx-auto bg-white/20 group-hover:bg-blue-400/50 transition-colors rounded-full" />
               </div>
             )}
           </div>

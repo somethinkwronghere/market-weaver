@@ -15,6 +15,7 @@ export interface Position {
   entryTime: number;
   stopLoss?: number;
   takeProfit?: number;
+  useOverlay?: boolean;
 }
 
 export interface Trade {

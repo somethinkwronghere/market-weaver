@@ -21,11 +21,11 @@ export function useTradingEngine() {
     setState(prev => {
       const positionsToClose: Position[] = [];
       const remainingPositions: Position[] = [];
-      
+
       // Check SL/TP for each position
       prev.positions.forEach(pos => {
         let shouldClose = false;
-        
+
         if (pos.type === 'long') {
           if (pos.stopLoss && price <= pos.stopLoss) shouldClose = true;
           if (pos.takeProfit && price >= pos.takeProfit) shouldClose = true;
@@ -33,7 +33,7 @@ export function useTradingEngine() {
           if (pos.stopLoss && price >= pos.stopLoss) shouldClose = true;
           if (pos.takeProfit && price <= pos.takeProfit) shouldClose = true;
         }
-        
+
         if (shouldClose) {
           positionsToClose.push(pos);
         } else {
@@ -44,10 +44,10 @@ export function useTradingEngine() {
       // Calculate PnL for closed positions
       let totalClosedPnL = 0;
       const newTrades = positionsToClose.map(pos => {
-        const exitPrice = pos.type === 'long' 
+        const exitPrice = pos.type === 'long'
           ? (pos.stopLoss && price <= pos.stopLoss ? pos.stopLoss : pos.takeProfit!)
           : (pos.stopLoss && price >= pos.stopLoss ? pos.stopLoss : pos.takeProfit!);
-        
+
         const priceDiff = pos.type === 'long'
           ? exitPrice - pos.entryPrice
           : pos.entryPrice - exitPrice;
@@ -67,8 +67,8 @@ export function useTradingEngine() {
       });
 
       const unrealizedPnL = remainingPositions.reduce((total, pos) => {
-        const priceDiff = pos.type === 'long' 
-          ? price - pos.entryPrice 
+        const priceDiff = pos.type === 'long'
+          ? price - pos.entryPrice
           : pos.entryPrice - price;
         return total + (priceDiff * pos.size * LEVERAGE);
       }, 0);
@@ -86,15 +86,16 @@ export function useTradingEngine() {
     });
   }, []);
 
-  const openPosition = useCallback((type: 'long' | 'short', size: number, candle: OHLCData, stopLoss?: number, takeProfit?: number) => {
+  const openPosition = useCallback((type: 'long' | 'short', size: number, candle: OHLCData, stopLoss?: number, takeProfit?: number, useOverlay?: boolean) => {
     const position: Position = {
-      id: crypto.randomUUID(),
+      id: generateId(),
       type,
       entryPrice: candle.close,
       size,
       entryTime: candle.time,
       stopLoss,
       takeProfit,
+      useOverlay,
     };
 
     setState(prev => ({
@@ -116,7 +117,7 @@ export function useTradingEngine() {
       const pnl = priceDiff * position.size * LEVERAGE;
 
       const trade: Trade = {
-        id: crypto.randomUUID(),
+        id: generateId(),
         type: position.type,
         entryPrice: position.entryPrice,
         exitPrice,

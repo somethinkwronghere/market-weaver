@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import {
   TrendingUp,
+  TrendingDown,
   Minus,
   BarChart3,
   MousePointer,
@@ -17,7 +18,7 @@ import {
 import { Switch } from '@/components/ui/switch';
 import { useIndicatorsContext } from '@/contexts/IndicatorContext';
 
-export type DrawingTool = 'select' | 'trendline' | 'horizontal' | 'fibonacci' | 'support-resistance';
+export type DrawingTool = 'select' | 'trendline' | 'horizontal' | 'fibonacci' | 'support-resistance' | 'long-position' | 'short-position';
 
 interface DrawingToolbarProps {
   activeTool: DrawingTool;
@@ -31,6 +32,8 @@ const tools = [
   { id: 'horizontal' as const, icon: Minus, label: 'Horizontal Line' },
   { id: 'fibonacci' as const, icon: BarChart3, label: 'Fibonacci' },
   { id: 'support-resistance' as const, icon: Circle, label: 'S/R Level' },
+  { id: 'long-position' as const, icon: TrendingUp, label: 'Long Position', color: 'text-green-500' },
+  { id: 'short-position' as const, icon: TrendingDown, label: 'Short Position', color: 'text-red-500' },
 ];
 
 const indicatorLabels: Record<string, string> = {
@@ -52,6 +55,7 @@ export function DrawingToolbar({ activeTool, onToolChange, onClearDrawings }: Dr
     <div className="flex items-center gap-1 p-1 bg-card rounded-lg border border-border">
       {tools.map((tool) => {
         const Icon = tool.icon;
+        const toolColor = 'color' in tool ? tool.color : undefined;
         return (
           <button
             key={tool.id}
@@ -60,11 +64,11 @@ export function DrawingToolbar({ activeTool, onToolChange, onClearDrawings }: Dr
             className={cn(
               "p-2 rounded transition-colors",
               activeTool === tool.id
-                ? "bg-primary text-primary-foreground"
-                : "hover:bg-muted text-muted-foreground hover:text-foreground"
+                ? toolColor ? `bg-opacity-20 ${toolColor} bg-current` : "bg-primary text-primary-foreground"
+                : toolColor ? `${toolColor} hover:bg-muted/50` : "hover:bg-muted text-muted-foreground hover:text-foreground"
             )}
           >
-            <Icon className="w-4 h-4" />
+            <Icon className={cn("w-4 h-4", toolColor)} />
           </button>
         );
       })}
